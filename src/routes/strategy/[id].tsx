@@ -1,11 +1,22 @@
 import { useParams, Link } from "react-router-dom";
+import { useRef, useState, useEffect, useCallback } from "react";
 import {
   useStrategyPerformance,
   useStrategyHoldings,
   usePortfolioSummary,
   useStrategyDetail,
+  useEquityCurve,
 } from "@/api/strategies";
 import { formatCurrency, formatPct, formatNumber, cn } from "@/lib/utils";
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 
 export function StrategyDetail() {
   const { id } = useParams<{ id: string }>();
@@ -17,12 +28,96 @@ export function StrategyDetail() {
         &larr; Back to Dashboard
       </Link>
       <PerformanceSection id={id} />
+      <EquityCurveSection id={id} />
       <PortfolioSection id={id} />
       <HoldingsSection id={id} />
       <TradeHistorySection id={id} />
+      <ChatSection id={id} />
     </div>
   );
 }
+
+// ----- Equity Curve -----
+
+function EquityCurveSection({ id }: { id: string }) {
+  const { data: points } = useEquityCurve(id);
+  if (!points || points.length < 2) return null;
+
+  const formatted = points.map((p) => ({
+    time: new Date(p.ts).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+    value: p.totalValue,
+  }));
+
+  const first = formatted[0].value;
+  const last = formatted[formatted.length - 1].value;
+  const isUp = last >= first;
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+      <h3 className="text-lg font-semibold text-white mb-4">Equity Curve</h3>
+      <div className="h-56">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={formatted} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
+            <defs>
+              <linearGradient id="equity-grad" x1="0" y1="0" x2="0" y2="1">
+                <stop
+                  offset="5%"
+                  stopColor={isUp ? "#22c55e" : "#ef4444"}
+                  stopOpacity={0.3}
+                />
+                <stop
+                  offset="95%"
+                  stopColor={isUp ? "#22c55e" : "#ef4444"}
+                  stopOpacity={0.02}
+                />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+            <XAxis
+              dataKey="time"
+              tick={{ fill: "#6b7280", fontSize: 11 }}
+              tickLine={false}
+              axisLine={false}
+              interval="preserveStartEnd"
+            />
+            <YAxis
+              tick={{ fill: "#6b7280", fontSize: 11 }}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(v: number) => `$${v.toLocaleString()}`}
+              width={72}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: "#111827",
+                border: "1px solid #374151",
+                borderRadius: "8px",
+                color: "#f9fafb",
+                fontSize: 12,
+              }}
+              formatter={(v: number) => [`$${v.toLocaleString()}`, "Value"]}
+            />
+            <Area
+              type="monotone"
+              dataKey="value"
+              stroke={isUp ? "#22c55e" : "#ef4444"}
+              strokeWidth={2}
+              fill="url(#equity-grad)"
+              dot={false}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+// ----- Performance -----
 
 function PerformanceSection({ id }: { id: string }) {
   const { data } = useStrategyPerformance(id);
@@ -61,6 +156,8 @@ function PerformanceSection({ id }: { id: string }) {
   );
 }
 
+// ----- Portfolio -----
+
 function PortfolioSection({ id }: { id: string }) {
   const { data } = usePortfolioSummary(id);
   if (!data) return null;
@@ -86,6 +183,8 @@ function PortfolioSection({ id }: { id: string }) {
     </div>
   );
 }
+
+// ----- Holdings -----
 
 function HoldingsSection({ id }: { id: string }) {
   const { data: holdings } = useStrategyHoldings(id);
@@ -154,6 +253,8 @@ function HoldingsSection({ id }: { id: string }) {
     </div>
   );
 }
+
+// ----- Trade History -----
 
 function TradeHistorySection({ id }: { id: string }) {
   const { data: cycles } = useStrategyDetail(id);
@@ -229,6 +330,218 @@ function TradeHistorySection({ id }: { id: string }) {
     </div>
   );
 }
+
+// ----- AI Chat -----
+
+interface Message {
+  role: "user" | "assistant";
+  content: string;
+  streaming?: boolean;
+}
+
+const QUICK_PROMPTS = [
+  "Why did you make these recent trades?",
+  "Analyze the current risk exposure.",
+  "How can I improve this strategy?",
+  "Summarize the performance so far.",
+];
+
+function ChatSection({ id }: { id: string }) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const send = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed || isStreaming) return;
+      setInput("");
+
+      const history = messages
+        .filter((m) => !m.streaming)
+        .map((m) => ({ role: m.role, content: m.content }));
+
+      setMessages((prev) => [
+        ...prev,
+        { role: "user", content: trimmed },
+        { role: "assistant", content: "", streaming: true },
+      ]);
+      setIsStreaming(true);
+
+      const abort = new AbortController();
+      abortRef.current = abort;
+
+      try {
+        const res = await fetch("/api/v1/strategies/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, message: trimmed, history }),
+          signal: abort.signal,
+        });
+
+        if (!res.ok || !res.body) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const payload = line.slice(6);
+            if (payload === "[DONE]") break;
+
+            try {
+              const chunk = JSON.parse(payload) as string;
+              setMessages((prev) => {
+                const copy = [...prev];
+                const last = copy[copy.length - 1];
+                if (last?.streaming) {
+                  copy[copy.length - 1] = { ...last, content: last.content + chunk };
+                }
+                return copy;
+              });
+            } catch {
+              // non-text chunk, ignore
+            }
+          }
+        }
+      } catch (err) {
+        if ((err as Error).name !== "AbortError") {
+          setMessages((prev) => {
+            const copy = [...prev];
+            const last = copy[copy.length - 1];
+            if (last?.streaming) {
+              copy[copy.length - 1] = {
+                ...last,
+                content: last.content || "Error: " + (err as Error).message,
+                streaming: false,
+              };
+            }
+            return copy;
+          });
+        }
+      } finally {
+        setMessages((prev) =>
+          prev.map((m) => (m.streaming ? { ...m, streaming: false } : m))
+        );
+        setIsStreaming(false);
+        abortRef.current = null;
+      }
+    },
+    [id, messages, isStreaming]
+  );
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send(input);
+    }
+  };
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+      <h3 className="text-lg font-semibold text-white mb-4">Chat with AI Advisor</h3>
+
+      {messages.length === 0 && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          {QUICK_PROMPTS.map((q) => (
+            <button
+              key={q}
+              type="button"
+              onClick={() => send(q)}
+              disabled={isStreaming}
+              className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-400 hover:border-blue-500 hover:text-blue-300 transition-colors disabled:opacity-40"
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {messages.length > 0 && (
+        <div className="space-y-4 mb-4 max-h-[480px] overflow-y-auto pr-1">
+          {messages.map((m, i) => (
+            <div
+              key={i}
+              className={cn(
+                "flex",
+                m.role === "user" ? "justify-end" : "justify-start"
+              )}
+            >
+              <div
+                className={cn(
+                  "max-w-[80%] rounded-xl px-4 py-3 text-sm whitespace-pre-wrap",
+                  m.role === "user"
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-800 text-gray-200 border border-gray-700"
+                )}
+              >
+                {m.content}
+                {m.streaming && (
+                  <span className="inline-flex gap-0.5 ml-1">
+                    <span className="animate-bounce" style={{ animationDelay: "0ms" }}>·</span>
+                    <span className="animate-bounce" style={{ animationDelay: "150ms" }}>·</span>
+                    <span className="animate-bounce" style={{ animationDelay: "300ms" }}>·</span>
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+      )}
+
+      <div className="flex gap-2 items-end">
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={isStreaming}
+          placeholder="Ask about your strategy… (Enter to send, Shift+Enter for newline)"
+          rows={2}
+          className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500 resize-none disabled:opacity-50 placeholder-gray-600"
+        />
+        {isStreaming ? (
+          <button
+            type="button"
+            onClick={() => abortRef.current?.abort()}
+            className="px-4 py-2 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 text-sm font-medium transition-colors"
+          >
+            Stop
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => send(input)}
+            disabled={!input.trim()}
+            className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+          >
+            Send
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ----- Shared -----
 
 function Stat({
   label,

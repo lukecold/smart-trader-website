@@ -122,6 +122,7 @@ export function CreateStrategy() {
         exchange_id: form.exchangeId,
         api_key: form.exchangeApiKey,
         secret_key: form.exchangeSecretKey,
+        market_type: form.marketType,
       });
       const capital = result?.totalBalance ?? result?.freeBalance ?? 0;
       setForm((prev) => ({ ...prev, initialCapital: capital }));

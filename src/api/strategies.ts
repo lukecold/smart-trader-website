@@ -113,6 +113,7 @@ export function useFetchBalance() {
       api_key: string;
       secret_key: string;
       passphrase?: string;
+      market_type?: string;
     }) => {
       const res = await api.post<{ freeBalance: number; totalBalance: number }>(
         "/strategies/fetch-balance",
@@ -120,6 +121,20 @@ export function useFetchBalance() {
       );
       return res.data;
     },
+  });
+}
+
+export function useEquityCurve(id: string) {
+  return useQuery({
+    queryKey: ["strategy", id, "equity"] as const,
+    queryFn: async () => {
+      const res = await api.get<{ ts: number; totalValue: number }[]>(
+        `/strategies/equity?id=${id}`
+      );
+      return res.data;
+    },
+    enabled: !!id,
+    refetchInterval: 30000,
   });
 }
 
