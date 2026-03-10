@@ -324,25 +324,14 @@ export function PromptSection({ id, currentPrompt }: Props) {
       {/* ── Improve with AI ── */}
       {mode === "improve" && (
         <div className="space-y-3">
-          {/* Proposed prompt banner */}
+          {/* Proposed prompt banner with diff */}
           {proposedPrompt && (
-            <div className="bg-green-900/20 border border-green-700/40 rounded-lg p-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-green-400 font-medium">
-                  ✓ AI proposed an improved prompt
-                </span>
-                <button
-                  onClick={handleApplyProposed}
-                  disabled={updatePrompt.isPending}
-                  className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-500 disabled:opacity-40 transition-colors"
-                >
-                  {updatePrompt.isPending ? "Applying…" : "Apply Prompt"}
-                </button>
-              </div>
-              <pre className="text-xs text-gray-300 whitespace-pre-wrap max-h-40 overflow-y-auto font-mono">
-                {proposedPrompt}
-              </pre>
-            </div>
+            <ProposedPromptDiff
+              currentPrompt={currentPrompt ?? ""}
+              proposedPrompt={proposedPrompt}
+              onApply={handleApplyProposed}
+              applying={updatePrompt.isPending}
+            />
           )}
 
           {/* Chat messages */}
@@ -618,6 +607,89 @@ function SplitDiff({ changes }: { changes: Change[] }) {
         })}
       </tbody>
     </table>
+  );
+}
+
+// ─── Proposed prompt diff ────────────────────────────────────────────────────
+
+function ProposedPromptDiff({
+  currentPrompt,
+  proposedPrompt,
+  onApply,
+  applying,
+}: {
+  currentPrompt: string;
+  proposedPrompt: string;
+  onApply: () => void;
+  applying: boolean;
+}) {
+  const [viewMode, setViewMode] = useState<"diff" | "full">("diff");
+  const [proposedDiffMode, setProposedDiffMode] = useState<DiffViewMode>("inline");
+  const changes = diffLines(currentPrompt, proposedPrompt);
+
+  return (
+    <div className="bg-green-900/20 border border-green-700/40 rounded-lg overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-green-700/30">
+        <span className="text-sm text-green-400 font-medium">
+          AI proposed an improved prompt
+        </span>
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1 mr-2">
+            <DiffModeBtn
+              active={viewMode === "diff"}
+              onClick={() => setViewMode("diff")}
+            >
+              Diff
+            </DiffModeBtn>
+            <DiffModeBtn
+              active={viewMode === "full"}
+              onClick={() => setViewMode("full")}
+            >
+              Full
+            </DiffModeBtn>
+          </div>
+          {viewMode === "diff" && (
+            <div className="flex gap-1 mr-2">
+              <DiffModeBtn
+                active={proposedDiffMode === "inline"}
+                onClick={() => setProposedDiffMode("inline")}
+              >
+                Inline
+              </DiffModeBtn>
+              <DiffModeBtn
+                active={proposedDiffMode === "split"}
+                onClick={() => setProposedDiffMode("split")}
+              >
+                Side by side
+              </DiffModeBtn>
+            </div>
+          )}
+          <button
+            onClick={onApply}
+            disabled={applying}
+            className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-500 disabled:opacity-40 transition-colors"
+          >
+            {applying ? "Applying…" : "Apply Prompt"}
+          </button>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="max-h-64 overflow-y-auto text-xs font-mono">
+        {viewMode === "diff" ? (
+          proposedDiffMode === "inline" ? (
+            <InlineDiff changes={changes} />
+          ) : (
+            <SplitDiff changes={changes} />
+          )
+        ) : (
+          <pre className="px-4 py-3 text-gray-300 whitespace-pre-wrap leading-5">
+            {proposedPrompt}
+          </pre>
+        )}
+      </div>
+    </div>
   );
 }
 

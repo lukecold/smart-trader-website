@@ -97,6 +97,33 @@ export interface PromptVersion {
   createdAt: string;
 }
 
+export interface BacktestPoint {
+  ts: number;
+  totalValue: number;
+  cash: number;
+  pnl: number;
+}
+
+export interface BacktestTrade {
+  ts: number;
+  symbol: string;
+  action: string;
+  side: string;
+  quantity: number;
+  price: number;
+  pnl: number;
+}
+
+export interface BacktestSummary {
+  totalReturn: number;
+  totalReturnPct: number;
+  totalTrades: number;
+  winningTrades: number;
+  winRate: number;
+  maxDrawdown: number;
+  maxDrawdownPct: number;
+}
+
 export interface CandleConfig {
   interval: string;
   limit: number;

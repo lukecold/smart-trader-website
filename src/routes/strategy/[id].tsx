@@ -9,6 +9,7 @@ import {
 } from "@/api/strategies";
 import { formatCurrency, formatPct, formatNumber, cn } from "@/lib/utils";
 import { PromptSection } from "@/components/strategy/PromptSection";
+import { BacktestSection } from "@/components/strategy/BacktestSection";
 import {
   AreaChart,
   Area,
@@ -33,6 +34,7 @@ export function StrategyDetail() {
       <PortfolioSection id={id} />
       <HoldingsSection id={id} />
       <PromptSectionWrapper id={id} />
+      <BacktestSection id={id} />
       <TradeHistorySection id={id} />
       <ChatSection id={id} />
     </div>
