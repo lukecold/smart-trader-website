@@ -1,7 +1,15 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCreateStrategy, usePrompts } from "@/api/strategies";
-import type { CreateStrategyInput } from "@/types/strategy";
+import type { CandleConfig, CreateStrategyInput } from "@/types/strategy";
+
+const DEFAULT_CANDLE_CONFIGS: CandleConfig[] = [
+  { interval: "1h", limit: 168 },
+  { interval: "4h", limit: 120 },
+  { interval: "1d", limit: 60 },
+];
+
+const INTERVAL_OPTIONS = ["1m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w"];
 
 export function CreateStrategy() {
   const navigate = useNavigate();
@@ -29,6 +37,17 @@ export function CreateStrategy() {
     templateId: "",
   });
 
+  const [candleConfigs, setCandleConfigs] = useState<CandleConfig[]>(DEFAULT_CANDLE_CONFIGS);
+
+  const updateCandle = (index: number, field: keyof CandleConfig, value: string | number) =>
+    setCandleConfigs((prev) => prev.map((c, i) => (i === index ? { ...c, [field]: value } : c)));
+
+  const addCandle = () =>
+    setCandleConfigs((prev) => [...prev, { interval: "1h", limit: 100 }]);
+
+  const removeCandle = (index: number) =>
+    setCandleConfigs((prev) => prev.filter((_, i) => i !== index));
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -54,6 +73,7 @@ export function CreateStrategy() {
         max_positions: form.maxPositions,
         decide_interval: form.decideInterval,
         symbols: form.symbols.split(",").map((s) => s.trim()),
+        candle_configs: candleConfigs,
         prompt_text: form.promptText || undefined,
         template_id: form.templateId || undefined,
       },
@@ -231,6 +251,53 @@ export function CreateStrategy() {
               />
             </Field>
           </div>
+        </Section>
+
+        {/* Market Data */}
+        <Section title="Market Data">
+          <p className="text-xs text-gray-500 -mt-2">
+            Candles fetched each cycle and used to compute EMA, RSI, Bollinger Bands, and ATR for the LLM prompt.
+          </p>
+          <div className="space-y-2">
+            {candleConfigs.map((cfg, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <select
+                  value={cfg.interval}
+                  onChange={(e) => updateCandle(i, "interval", e.target.value)}
+                  className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500 w-28"
+                >
+                  {INTERVAL_OPTIONS.map((o) => (
+                    <option key={o} value={o}>{o}</option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  value={cfg.limit}
+                  min={1}
+                  max={1500}
+                  onChange={(e) => updateCandle(i, "limit", Number(e.target.value))}
+                  className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500 w-28"
+                />
+                <span className="text-gray-500 text-sm">candles</span>
+                <button
+                  type="button"
+                  onClick={() => removeCandle(i)}
+                  disabled={candleConfigs.length <= 1}
+                  className="text-gray-500 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed ml-auto text-lg leading-none"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={addCandle}
+            disabled={candleConfigs.length >= 6}
+            className="text-sm text-blue-400 hover:text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            + Add timeframe
+          </button>
         </Section>
 
         {/* Strategy Prompt */}

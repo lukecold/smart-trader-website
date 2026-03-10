@@ -90,6 +90,11 @@ export interface Prompt {
   updatedAt: string;
 }
 
+export interface CandleConfig {
+  interval: string;
+  limit: number;
+}
+
 export interface CreateStrategyInput {
   llm_model_config: {
     provider: string;
@@ -113,6 +118,7 @@ export interface CreateStrategyInput {
     max_positions?: number;
     decide_interval?: number;
     symbols: string[];
+    candle_configs?: CandleConfig[];
     template_id?: string;
     prompt_text?: string;
     cap_factor?: number;
