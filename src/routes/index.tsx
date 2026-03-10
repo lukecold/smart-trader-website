@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { useStrategies, useStopStrategy, useDeleteStrategy, useRestartStrategy } from "@/api/strategies";
 import { formatCurrency, formatPct, timeAgo, cn } from "@/lib/utils";
+import { useAuthGuard } from "@/hooks/useAuthGuard";
 import type { Strategy } from "@/types/strategy";
 
 export function Dashboard() {
@@ -8,6 +9,7 @@ export function Dashboard() {
   const stopMutation = useStopStrategy();
   const deleteMutation = useDeleteStrategy();
   const restartMutation = useRestartStrategy();
+  const { withAuth } = useAuthGuard();
 
   if (isLoading) {
     return (
@@ -49,13 +51,15 @@ export function Dashboard() {
             <StrategyCard
               key={s.strategyId}
               strategy={s}
-              onStop={() => stopMutation.mutate(s.strategyId)}
-              onDelete={() => {
-                if (confirm("Delete this strategy?")) {
-                  deleteMutation.mutate(s.strategyId);
-                }
-              }}
-              onRestart={() => restartMutation.mutate(s.strategyId)}
+              onStop={() => withAuth(() => stopMutation.mutate(s.strategyId))}
+              onDelete={() =>
+                withAuth(() => {
+                  if (confirm("Delete this strategy?")) {
+                    deleteMutation.mutate(s.strategyId);
+                  }
+                })
+              }
+              onRestart={() => withAuth(() => restartMutation.mutate(s.strategyId))}
             />
           ))}
         </div>

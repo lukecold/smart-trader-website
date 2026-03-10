@@ -1,8 +1,19 @@
 import { Outlet, Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/stores/auth";
+import { useAuthModalStore } from "@/stores/authModal";
+import { LoginModal } from "@/components/auth/LoginModal";
+import { logoutApi } from "@/api/auth";
 
 export function Layout() {
   const location = useLocation();
+  const { isAuthenticated, email, sessionToken, clearAuth } = useAuthStore();
+  const { open } = useAuthModalStore();
+
+  const handleLogout = async () => {
+    if (sessionToken) await logoutApi(sessionToken);
+    clearAuth();
+  };
 
   return (
     <div className="min-h-screen flex">
@@ -23,8 +34,30 @@ export function Layout() {
             Create Strategy
           </NavLink>
         </nav>
-        <div className="p-4 border-t border-gray-800 text-xs text-gray-600">
-          v0.1.0
+
+        {/* Auth area */}
+        <div className="p-4 border-t border-gray-800">
+          {isAuthenticated ? (
+            <div className="space-y-2">
+              <p className="text-xs text-gray-400 truncate" title={email ?? ""}>
+                {email}
+              </p>
+              <button
+                onClick={handleLogout}
+                className="w-full text-xs px-3 py-2 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors text-left"
+              >
+                Log out
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => open()}
+              className="w-full text-xs px-3 py-2 rounded-lg bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors"
+            >
+              Login
+            </button>
+          )}
+          <p className="text-xs text-gray-700 mt-3">v0.1.0</p>
         </div>
       </aside>
 
@@ -34,6 +67,9 @@ export function Layout() {
           <Outlet />
         </div>
       </main>
+
+      {/* Login modal — always mounted, invisible when closed */}
+      <LoginModal />
     </div>
   );
 }

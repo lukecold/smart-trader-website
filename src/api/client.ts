@@ -1,3 +1,5 @@
+import { useAuthStore } from "@/stores/auth";
+
 interface ApiResponse<T> {
   code: number;
   msg: string;
@@ -30,13 +32,26 @@ async function request<T>(
   path: string,
   options?: RequestInit
 ): Promise<ApiResponse<T>> {
+  // Inject session token if available
+  const { sessionToken, clearAuth } = useAuthStore.getState();
+  const authHeader: Record<string, string> = sessionToken
+    ? { Authorization: `Bearer ${sessionToken}` }
+    : {};
+
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: {
       "Content-Type": "application/json",
+      ...authHeader,
       ...options?.headers,
     },
     ...options,
   });
+
+  // Session expired or invalid — clear local auth state
+  if (res.status === 401) {
+    clearAuth();
+    throw new Error("Authentication required");
+  }
 
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}: ${res.statusText}`);

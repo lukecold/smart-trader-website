@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCreateStrategy, usePrompts, useFetchBalance } from "@/api/strategies";
+import { useAuthGuard } from "@/hooks/useAuthGuard";
 import type { CandleConfig, CreateStrategyInput } from "@/types/strategy";
 
 const DEFAULT_CANDLE_CONFIGS: CandleConfig[] = [
@@ -33,6 +34,7 @@ export function CreateStrategy() {
   const createMutation = useCreateStrategy();
   const fetchBalanceMutation = useFetchBalance();
   const { data: prompts } = usePrompts();
+  const { withAuth } = useAuthGuard();
 
   const [form, setForm] = useState({
     strategyName: "",
@@ -133,7 +135,7 @@ export function CreateStrategy() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     if (symbols.length === 0) {
@@ -141,6 +143,10 @@ export function CreateStrategy() {
       return;
     }
 
+    withAuth(() => doCreate());
+  };
+
+  const doCreate = async () => {
     const input: CreateStrategyInput = {
       llm_model_config: {
         provider: form.provider,
@@ -176,6 +182,8 @@ export function CreateStrategy() {
       alert("Failed to create strategy: " + (err as Error).message);
     }
   };
+
+  // (handleSubmit is defined above)
 
   const update = (field: string, value: string | number) =>
     setForm((prev) => ({ ...prev, [field]: value }));
