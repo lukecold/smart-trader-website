@@ -96,13 +96,30 @@ export function useCreateStrategy() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: CreateStrategyInput) => {
-      const res = await api.post<{ strategy_id: string }>(
+      const res = await api.post<{ strategyId: string }>(
         "/strategies/create",
         input
       );
       return res.data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.list }),
+  });
+}
+
+export function useFetchBalance() {
+  return useMutation({
+    mutationFn: async (payload: {
+      exchange_id: string;
+      api_key: string;
+      secret_key: string;
+      passphrase?: string;
+    }) => {
+      const res = await api.post<{ freeBalance: number; totalBalance: number }>(
+        "/strategies/fetch-balance",
+        payload
+      );
+      return res.data;
+    },
   });
 }
 

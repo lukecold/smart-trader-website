@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { useCreateStrategy, usePrompts } from "@/api/strategies";
+import { useCreateStrategy, usePrompts, useFetchBalance } from "@/api/strategies";
 import type { CandleConfig, CreateStrategyInput } from "@/types/strategy";
 
 const DEFAULT_CANDLE_CONFIGS: CandleConfig[] = [
@@ -11,9 +11,27 @@ const DEFAULT_CANDLE_CONFIGS: CandleConfig[] = [
 
 const INTERVAL_OPTIONS = ["1m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w"];
 
+const POPULAR_SYMBOLS = [
+  "BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT",
+  "XRP-USDT", "DOGE-USDT", "ADA-USDT", "AVAX-USDT",
+];
+
+const MODEL_PRESETS: Record<string, string[]> = {
+  deepseek: ["deepseek-chat", "deepseek-reasoner"],
+  openai: ["gpt-4o", "gpt-4o-mini", "o3-mini", "o1-mini"],
+  openrouter: [
+    "deepseek/deepseek-r1",
+    "meta-llama/llama-3.3-70b-instruct",
+    "anthropic/claude-3-5-sonnet",
+    "google/gemini-2.0-flash-001",
+  ],
+  google: ["gemini-2.0-flash-001", "gemini-2.0-flash-thinking-exp", "gemini-1.5-pro"],
+};
+
 export function CreateStrategy() {
   const navigate = useNavigate();
   const createMutation = useCreateStrategy();
+  const fetchBalanceMutation = useFetchBalance();
   const { data: prompts } = usePrompts();
 
   const [form, setForm] = useState({
@@ -22,7 +40,7 @@ export function CreateStrategy() {
     provider: "deepseek",
     modelId: "deepseek-chat",
     apiKey: "",
-    exchangeId: "",
+    exchangeId: "binance",
     exchangeApiKey: "",
     exchangeSecretKey: "",
     tradingMode: "virtual",
@@ -32,13 +50,61 @@ export function CreateStrategy() {
     maxLeverage: 5,
     maxPositions: 2,
     decideInterval: 60,
-    symbols: "BTC-USDT",
     promptText: "",
     templateId: "",
   });
 
+  // Symbol tag state
+  const [symbols, setSymbols] = useState<string[]>(["BTC-USDT"]);
+  const [symbolInput, setSymbolInput] = useState("");
+  const symbolInputRef = useRef<HTMLInputElement>(null);
+
+  // Candle config state
   const [candleConfigs, setCandleConfigs] = useState<CandleConfig[]>(DEFAULT_CANDLE_CONFIGS);
 
+  // Balance fetch state (live mode)
+  const [balanceFetched, setBalanceFetched] = useState(false);
+  const [balanceError, setBalanceError] = useState("");
+
+  // Reset balance state when switching away from live mode
+  useEffect(() => {
+    if (form.tradingMode !== "live") {
+      setBalanceFetched(false);
+      setBalanceError("");
+      setForm((prev) => ({ ...prev, initialCapital: 10000 }));
+    }
+  }, [form.tradingMode]);
+
+  // Symbol helpers
+  const addSymbol = (sym: string) => {
+    const s = sym.trim().toUpperCase().replace(/\s/g, "");
+    if (s && !symbols.includes(s)) {
+      setSymbols((prev) => [...prev, s]);
+    }
+    setSymbolInput("");
+  };
+
+  const removeSymbol = (sym: string) =>
+    setSymbols((prev) => prev.filter((s) => s !== sym));
+
+  const togglePopularSymbol = (sym: string) => {
+    if (symbols.includes(sym)) {
+      removeSymbol(sym);
+    } else {
+      setSymbols((prev) => [...prev, sym]);
+    }
+  };
+
+  const handleSymbolKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      addSymbol(symbolInput);
+    } else if (e.key === "Backspace" && symbolInput === "" && symbols.length > 0) {
+      setSymbols((prev) => prev.slice(0, -1));
+    }
+  };
+
+  // Candle helpers
   const updateCandle = (index: number, field: keyof CandleConfig, value: string | number) =>
     setCandleConfigs((prev) => prev.map((c, i) => (i === index ? { ...c, [field]: value } : c)));
 
@@ -48,8 +114,31 @@ export function CreateStrategy() {
   const removeCandle = (index: number) =>
     setCandleConfigs((prev) => prev.filter((_, i) => i !== index));
 
+  // Balance fetch
+  const handleFetchBalance = async () => {
+    setBalanceError("");
+    try {
+      const result = await fetchBalanceMutation.mutateAsync({
+        exchange_id: form.exchangeId,
+        api_key: form.exchangeApiKey,
+        secret_key: form.exchangeSecretKey,
+      });
+      const capital = result?.totalBalance ?? result?.freeBalance ?? 0;
+      setForm((prev) => ({ ...prev, initialCapital: capital }));
+      setBalanceFetched(true);
+    } catch (err) {
+      setBalanceError("Failed to fetch balance: " + (err as Error).message);
+      setBalanceFetched(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (symbols.length === 0) {
+      alert("Please add at least one symbol.");
+      return;
+    }
 
     const input: CreateStrategyInput = {
       llm_model_config: {
@@ -72,7 +161,7 @@ export function CreateStrategy() {
         max_leverage: form.maxLeverage,
         max_positions: form.maxPositions,
         decide_interval: form.decideInterval,
-        symbols: form.symbols.split(",").map((s) => s.trim()),
+        symbols: symbols,
         candle_configs: candleConfigs,
         prompt_text: form.promptText || undefined,
         template_id: form.templateId || undefined,
@@ -81,7 +170,7 @@ export function CreateStrategy() {
 
     try {
       const result = await createMutation.mutateAsync(input);
-      navigate(`/strategy/${result.strategy_id}`);
+      navigate(`/strategy/${result.strategyId}`);
     } catch (err) {
       alert("Failed to create strategy: " + (err as Error).message);
     }
@@ -89,6 +178,8 @@ export function CreateStrategy() {
 
   const update = (field: string, value: string | number) =>
     setForm((prev) => ({ ...prev, [field]: value }));
+
+  const isLive = form.tradingMode === "live";
 
   return (
     <div className="max-w-2xl">
@@ -114,14 +205,59 @@ export function CreateStrategy() {
               <option value="GridStrategy">Grid</option>
             </select>
           </Field>
-          <Field label="Symbols (comma-separated)">
-            <input
-              value={form.symbols}
-              onChange={(e) => update("symbols", e.target.value)}
-              required
-              placeholder="BTC-USDT, ETH-USDT"
-            />
-          </Field>
+
+          {/* Symbol tag input */}
+          <div>
+            <span className="text-sm text-gray-400 mb-2 block">Symbols</span>
+            {/* Popular presets */}
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {POPULAR_SYMBOLS.map((sym) => (
+                <button
+                  key={sym}
+                  type="button"
+                  onClick={() => togglePopularSymbol(sym)}
+                  className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                    symbols.includes(sym)
+                      ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                      : "border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-500"
+                  }`}
+                >
+                  {sym}
+                </button>
+              ))}
+            </div>
+            {/* Tag input */}
+            <div
+              className="min-h-[42px] bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 flex flex-wrap gap-1.5 items-center cursor-text focus-within:border-blue-500 transition-colors"
+              onClick={() => symbolInputRef.current?.focus()}
+            >
+              {symbols.map((sym) => (
+                <span
+                  key={sym}
+                  className="flex items-center gap-1 bg-blue-500/20 text-blue-300 text-xs px-2 py-0.5 rounded-full"
+                >
+                  {sym}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); removeSymbol(sym); }}
+                    className="hover:text-white leading-none"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              <input
+                ref={symbolInputRef}
+                value={symbolInput}
+                onChange={(e) => setSymbolInput(e.target.value)}
+                onKeyDown={handleSymbolKeyDown}
+                onBlur={() => { if (symbolInput.trim()) addSymbol(symbolInput); }}
+                placeholder={symbols.length === 0 ? "Type symbol + Enter…" : ""}
+                className="bg-transparent outline-none text-white text-sm flex-1 min-w-[120px] placeholder-gray-600"
+              />
+            </div>
+            <p className="text-xs text-gray-600 mt-1">Click presets or type and press Enter / comma</p>
+          </div>
         </Section>
 
         {/* LLM Config */}
@@ -129,7 +265,12 @@ export function CreateStrategy() {
           <Field label="Provider">
             <select
               value={form.provider}
-              onChange={(e) => update("provider", e.target.value)}
+              onChange={(e) => {
+                const prov = e.target.value;
+                update("provider", prov);
+                const defaults = MODEL_PRESETS[prov];
+                if (defaults?.[0]) update("modelId", defaults[0]);
+              }}
             >
               <option value="deepseek">DeepSeek</option>
               <option value="openrouter">OpenRouter</option>
@@ -137,13 +278,19 @@ export function CreateStrategy() {
               <option value="google">Google</option>
             </select>
           </Field>
-          <Field label="Model ID">
+          <Field label="Model">
             <input
+              list="model-presets"
               value={form.modelId}
               onChange={(e) => update("modelId", e.target.value)}
               required
               placeholder="deepseek-chat"
             />
+            <datalist id="model-presets">
+              {(MODEL_PRESETS[form.provider] ?? []).map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
           </Field>
           <Field label="API Key">
             <input
@@ -166,14 +313,13 @@ export function CreateStrategy() {
               <option value="live">Live</option>
             </select>
           </Field>
-          {form.tradingMode === "live" && (
+          {isLive && (
             <>
               <Field label="Exchange">
                 <select
                   value={form.exchangeId}
                   onChange={(e) => update("exchangeId", e.target.value)}
                 >
-                  <option value="">Select...</option>
                   <option value="binance">Binance</option>
                 </select>
               </Field>
@@ -181,14 +327,20 @@ export function CreateStrategy() {
                 <input
                   type="password"
                   value={form.exchangeApiKey}
-                  onChange={(e) => update("exchangeApiKey", e.target.value)}
+                  onChange={(e) => {
+                    update("exchangeApiKey", e.target.value);
+                    setBalanceFetched(false);
+                  }}
                 />
               </Field>
               <Field label="Secret Key">
                 <input
                   type="password"
                   value={form.exchangeSecretKey}
-                  onChange={(e) => update("exchangeSecretKey", e.target.value)}
+                  onChange={(e) => {
+                    update("exchangeSecretKey", e.target.value);
+                    setBalanceFetched(false);
+                  }}
                 />
               </Field>
               <Field label="Market Type">
@@ -209,6 +361,29 @@ export function CreateStrategy() {
                   <option value="isolated">Isolated</option>
                 </select>
               </Field>
+
+              {/* Balance fetch */}
+              <div className="space-y-1.5">
+                <button
+                  type="button"
+                  onClick={handleFetchBalance}
+                  disabled={
+                    !form.exchangeApiKey ||
+                    !form.exchangeSecretKey ||
+                    fetchBalanceMutation.isPending
+                  }
+                  className="text-sm px-4 py-2 rounded-lg bg-gray-700 text-gray-200 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  {fetchBalanceMutation.isPending
+                    ? "Fetching…"
+                    : balanceFetched
+                    ? "✓ Balance fetched"
+                    : "Fetch Balance"}
+                </button>
+                {balanceError && (
+                  <p className="text-xs text-red-400">{balanceError}</p>
+                )}
+              </div>
             </>
           )}
         </Section>
@@ -216,13 +391,17 @@ export function CreateStrategy() {
         {/* Trading Parameters */}
         <Section title="Trading Parameters">
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Initial Capital (USDT)">
+            <Field label={isLive ? "Initial Capital (from exchange)" : "Initial Capital (USDT)"}>
               <input
                 type="number"
                 value={form.initialCapital}
-                onChange={(e) => update("initialCapital", Number(e.target.value))}
+                onChange={(e) => {
+                  if (!isLive) update("initialCapital", Number(e.target.value));
+                }}
+                readOnly={isLive}
                 required
                 min={1}
+                className={isLive ? "opacity-60 cursor-not-allowed" : ""}
               />
             </Field>
             <Field label="Max Leverage">
@@ -251,6 +430,11 @@ export function CreateStrategy() {
               />
             </Field>
           </div>
+          {isLive && !balanceFetched && (
+            <p className="text-xs text-yellow-500">
+              ↑ Click "Fetch Balance" in the Exchange section to sync your initial capital from the exchange.
+            </p>
+          )}
         </Section>
 
         {/* Market Data */}
@@ -334,7 +518,7 @@ export function CreateStrategy() {
 
         <button
           type="submit"
-          disabled={createMutation.isPending}
+          disabled={createMutation.isPending || symbols.length === 0}
           className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
         >
           {createMutation.isPending ? "Creating..." : "Create Strategy"}

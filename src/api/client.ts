@@ -6,6 +6,26 @@ interface ApiResponse<T> {
 
 const BASE_URL = "/api/v1";
 
+// Recursively convert snake_case object keys to camelCase.
+function camelize(str: string): string {
+  return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+}
+
+function camelizeKeys(obj: unknown): unknown {
+  if (Array.isArray(obj)) {
+    return obj.map(camelizeKeys);
+  }
+  if (obj !== null && typeof obj === "object") {
+    return Object.fromEntries(
+      Object.entries(obj as Record<string, unknown>).map(([key, val]) => [
+        camelize(key),
+        camelizeKeys(val),
+      ])
+    );
+  }
+  return obj;
+}
+
 async function request<T>(
   path: string,
   options?: RequestInit
@@ -22,7 +42,8 @@ async function request<T>(
     throw new Error(`HTTP ${res.status}: ${res.statusText}`);
   }
 
-  return res.json();
+  const json = await res.json();
+  return camelizeKeys(json) as ApiResponse<T>;
 }
 
 export const api = {
