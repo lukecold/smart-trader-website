@@ -7,6 +7,7 @@ import type {
   StrategyPerformance,
   ComposeCycle,
   Prompt,
+  PromptVersion,
   CreateStrategyInput,
 } from "@/types/strategy";
 
@@ -165,5 +166,47 @@ export function useRestartStrategy() {
       await api.post(`/strategies/restart?id=${id}`);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.list }),
+  });
+}
+
+export function usePromptHistory(id: string) {
+  return useQuery({
+    queryKey: ["strategy", id, "prompt-history"] as const,
+    queryFn: async () => {
+      const res = await api.get<PromptVersion[]>(
+        `/strategies/prompt-history?id=${id}`
+      );
+      return res.data;
+    },
+    enabled: !!id,
+  });
+}
+
+export function useUpdatePrompt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      prompt,
+      note,
+    }: {
+      id: string;
+      prompt: string;
+      note?: string;
+    }) => {
+      await api.post("/strategies/update-prompt", {
+        id,
+        prompt,
+        note: note || "manual edit",
+      });
+    },
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({
+        queryKey: ["strategy", id, "prompt-history"],
+      });
+      qc.invalidateQueries({
+        queryKey: ["strategy", id, "performance"],
+      });
+    },
   });
 }

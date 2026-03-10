@@ -90,6 +90,13 @@ export interface Prompt {
   updatedAt: string;
 }
 
+export interface PromptVersion {
+  version: number;
+  prompt: string;
+  note: string;
+  createdAt: string;
+}
+
 export interface CandleConfig {
   interval: string;
   limit: number;

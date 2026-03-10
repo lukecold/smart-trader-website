@@ -8,6 +8,7 @@ import {
   useEquityCurve,
 } from "@/api/strategies";
 import { formatCurrency, formatPct, formatNumber, cn } from "@/lib/utils";
+import { PromptSection } from "@/components/strategy/PromptSection";
 import {
   AreaChart,
   Area,
@@ -31,6 +32,7 @@ export function StrategyDetail() {
       <EquityCurveSection id={id} />
       <PortfolioSection id={id} />
       <HoldingsSection id={id} />
+      <PromptSectionWrapper id={id} />
       <TradeHistorySection id={id} />
       <ChatSection id={id} />
     </div>
@@ -180,6 +182,13 @@ function PortfolioSection({ id }: { id: string }) {
       </div>
     </div>
   );
+}
+
+// ----- Prompt -----
+
+function PromptSectionWrapper({ id }: { id: string }) {
+  const { data } = useStrategyPerformance(id);
+  return <PromptSection id={id} currentPrompt={data?.prompt ?? null} />;
 }
 
 // ----- Holdings -----
