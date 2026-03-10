@@ -344,22 +344,50 @@ const QUICK_PROMPTS = [
   "Summarize the performance so far.",
 ];
 
+// ChatSection renders as a fixed bottom bar (right of the w-64 sidebar).
+// Clicking the input or a quick prompt expands it to show conversation history.
+// Clicking outside collapses it back to the compact input strip.
 function ChatSection({ id }: { id: string }) {
+  const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Collapse when user clicks outside the panel
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    if (!open) return;
+    const handleMouseDown = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => document.removeEventListener("mousedown", handleMouseDown);
+  }, [open]);
+
+  // Auto-scroll to newest message
+  useEffect(() => {
+    if (open) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, open]);
+
+  // Focus the input when the panel opens
+  useEffect(() => {
+    if (open) {
+      const t = setTimeout(() => textareaRef.current?.focus(), 50);
+      return () => clearTimeout(t);
+    }
+  }, [open]);
 
   const send = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || isStreaming) return;
       setInput("");
+      setOpen(true);
 
       const history = messages
         .filter((m) => !m.streaming)
@@ -383,9 +411,7 @@ function ChatSection({ id }: { id: string }) {
           signal: abort.signal,
         });
 
-        if (!res.ok || !res.body) {
-          throw new Error(`HTTP ${res.status}`);
-        }
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -406,7 +432,17 @@ function ChatSection({ id }: { id: string }) {
             if (payload === "[DONE]") break;
 
             try {
-              const chunk = JSON.parse(payload) as string;
+              const parsed: unknown = JSON.parse(payload);
+              // Server sends json.Marshal(string) → a JSON string e.g. "hello"
+              // On error it sends {"error":"..."} → surface as a warning line
+              let chunk: string;
+              if (typeof parsed === "string") {
+                chunk = parsed;
+              } else if (parsed && typeof parsed === "object" && "error" in parsed) {
+                chunk = `⚠ ${(parsed as { error: string }).error}`;
+              } else {
+                continue;
+              }
               setMessages((prev) => {
                 const copy = [...prev];
                 const last = copy[copy.length - 1];
@@ -416,7 +452,7 @@ function ChatSection({ id }: { id: string }) {
                 return copy;
               });
             } catch {
-              // non-text chunk, ignore
+              // ignore unparseable lines
             }
           }
         }
@@ -454,88 +490,117 @@ function ChatSection({ id }: { id: string }) {
   };
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-      <h3 className="text-lg font-semibold text-white mb-4">Chat with AI Advisor</h3>
-
-      {messages.length === 0 && (
-        <div className="flex flex-wrap gap-2 mb-4">
-          {QUICK_PROMPTS.map((q) => (
-            <button
-              key={q}
-              type="button"
-              onClick={() => send(q)}
-              disabled={isStreaming}
-              className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-400 hover:border-blue-500 hover:text-blue-300 transition-colors disabled:opacity-40"
-            >
-              {q}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {messages.length > 0 && (
-        <div className="space-y-4 mb-4 max-h-[480px] overflow-y-auto pr-1">
-          {messages.map((m, i) => (
-            <div
-              key={i}
-              className={cn(
-                "flex",
-                m.role === "user" ? "justify-end" : "justify-start"
-              )}
-            >
-              <div
-                className={cn(
-                  "max-w-[80%] rounded-xl px-4 py-3 text-sm whitespace-pre-wrap",
-                  m.role === "user"
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-800 text-gray-200 border border-gray-700"
-                )}
+    <>
+      {/* Fixed bottom bar — sits to the right of the w-64 sidebar */}
+      <div
+        ref={panelRef}
+        className="fixed bottom-0 left-64 right-0 z-40 bg-gray-950 border-t border-gray-800 shadow-2xl"
+      >
+        {/* Expanded area: conversation history (only when open) */}
+        {open && (
+          <div className="border-b border-gray-800">
+            {/* Header */}
+            <div className="max-w-7xl mx-auto px-6 py-2.5 flex items-center justify-between">
+              <span className="text-sm font-semibold text-white">Ask AI</span>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="text-gray-500 hover:text-gray-300 text-xl leading-none transition-colors"
+                aria-label="Close chat"
               >
-                {m.content}
-                {m.streaming && (
-                  <span className="inline-flex gap-0.5 ml-1">
-                    <span className="animate-bounce" style={{ animationDelay: "0ms" }}>·</span>
-                    <span className="animate-bounce" style={{ animationDelay: "150ms" }}>·</span>
-                    <span className="animate-bounce" style={{ animationDelay: "300ms" }}>·</span>
-                  </span>
-                )}
-              </div>
+                ×
+              </button>
             </div>
-          ))}
-          <div ref={bottomRef} />
-        </div>
-      )}
 
-      <div className="flex gap-2 items-end">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={isStreaming}
-          placeholder="Ask about your strategy… (Enter to send, Shift+Enter for newline)"
-          rows={2}
-          className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500 resize-none disabled:opacity-50 placeholder-gray-600"
-        />
-        {isStreaming ? (
-          <button
-            type="button"
-            onClick={() => abortRef.current?.abort()}
-            className="px-4 py-2 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 text-sm font-medium transition-colors"
-          >
-            Stop
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => send(input)}
-            disabled={!input.trim()}
-            className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium transition-colors"
-          >
-            Send
-          </button>
+            {/* Messages or quick-prompt chips */}
+            <div className="max-w-7xl mx-auto px-6 pb-4 max-h-[50vh] overflow-y-auto">
+              {messages.length === 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {QUICK_PROMPTS.map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={() => send(q)}
+                      disabled={isStreaming}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-400 hover:border-blue-500 hover:text-blue-300 transition-colors disabled:opacity-40"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {messages.map((m, i) => (
+                    <div
+                      key={i}
+                      className={cn(
+                        "flex",
+                        m.role === "user" ? "justify-end" : "justify-start"
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "max-w-[80%] rounded-xl px-4 py-2.5 text-sm whitespace-pre-wrap",
+                          m.role === "user"
+                            ? "bg-blue-600 text-white"
+                            : "bg-gray-800 text-gray-200 border border-gray-700"
+                        )}
+                      >
+                        {m.content}
+                        {m.streaming && (
+                          <span className="inline-flex gap-0.5 ml-1">
+                            <span className="animate-bounce" style={{ animationDelay: "0ms" }}>·</span>
+                            <span className="animate-bounce" style={{ animationDelay: "150ms" }}>·</span>
+                            <span className="animate-bounce" style={{ animationDelay: "300ms" }}>·</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={bottomRef} />
+                </div>
+              )}
+            </div>
+          </div>
         )}
+
+        {/* Input strip — always visible */}
+        <div className="max-w-7xl mx-auto px-6 py-3 flex gap-2 items-center">
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onFocus={() => setOpen(true)}
+            onKeyDown={handleKeyDown}
+            disabled={isStreaming}
+            placeholder="Ask AI about your strategy…  (Enter to send · Shift+Enter for newline)"
+            rows={1}
+            className="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white text-sm outline-none focus:border-blue-500 resize-none disabled:opacity-50 placeholder-gray-600"
+          />
+          {isStreaming ? (
+            <button
+              type="button"
+              onClick={() => abortRef.current?.abort()}
+              className="px-4 py-2 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 text-sm font-medium transition-colors whitespace-nowrap"
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => send(input)}
+              disabled={!input.trim()}
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+            >
+              Send
+            </button>
+          )}
+        </div>
       </div>
-    </div>
+
+      {/* Spacer keeps the last page section from being obscured by the fixed bar */}
+      <div className="h-16" />
+    </>
   );
 }
 
