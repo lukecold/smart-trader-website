@@ -173,12 +173,10 @@ function PortfolioSection({ id }: { id: string }) {
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
       <h3 className="text-lg font-semibold text-white mb-4">Portfolio</h3>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Stat label="Cash" value={formatCurrency(data.cash)} />
         <Stat label="Total Value" value={formatCurrency(data.totalValue)} />
+        <Stat label="Available Cash" value={formatCurrency(data.cash)} />
         <Stat label="Total PnL" value={formatCurrency(data.totalPnl)} color={pnlColor} />
         <Stat label="PnL %" value={formatPct(data.totalPnlPct)} color={pnlColor} />
-        <Stat label="Gross Exposure" value={formatCurrency(data.grossExposure)} />
-        <Stat label="Net Exposure" value={formatCurrency(data.netExposure)} />
       </div>
     </div>
   );
