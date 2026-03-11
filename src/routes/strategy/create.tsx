@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useCreateStrategy, usePrompts, useFetchBalance } from "@/api/strategies";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import type { CandleConfig, CreateStrategyInput } from "@/types/strategy";
+import { StandaloneBacktestPanel } from "@/components/strategy/StandaloneBacktestPanel";
 
 const DEFAULT_CANDLE_CONFIGS: CandleConfig[] = [
   { interval: "1h", limit: 168 },
@@ -67,6 +68,9 @@ export function CreateStrategy() {
   // Balance fetch state (live mode)
   const [balanceFetched, setBalanceFetched] = useState(false);
   const [balanceError, setBalanceError] = useState("");
+
+  // Backtest panel
+  const [showBacktest, setShowBacktest] = useState(false);
 
   // Reset balance state when switching away from live mode
   useEffect(() => {
@@ -146,7 +150,16 @@ export function CreateStrategy() {
     withAuth(() => doCreate());
   };
 
-  const doCreate = async () => {
+  const handleBacktestFirst = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (symbols.length === 0) {
+      alert("Please add at least one symbol.");
+      return;
+    }
+    setShowBacktest(true);
+  };
+
+  const doCreate = async (opts?: { tradingMode?: string; promptText?: string }) => {
     const input: CreateStrategyInput = {
       llm_model_config: {
         provider: form.provider,
@@ -157,7 +170,7 @@ export function CreateStrategy() {
         exchange_id: form.exchangeId || undefined,
         api_key: form.exchangeApiKey || undefined,
         secret_key: form.exchangeSecretKey || undefined,
-        trading_mode: form.tradingMode,
+        trading_mode: opts?.tradingMode ?? form.tradingMode,
         market_type: form.marketType,
         margin_mode: form.marginMode,
       },
@@ -170,7 +183,7 @@ export function CreateStrategy() {
         decide_interval: form.decideInterval,
         symbols: symbols,
         candle_configs: candleConfigs,
-        prompt_text: form.promptText || undefined,
+        prompt_text: (opts?.promptText ?? form.promptText) || undefined,
         template_id: form.templateId || undefined,
       },
     };
@@ -525,14 +538,62 @@ export function CreateStrategy() {
           </Field>
         </Section>
 
-        <button
-          type="submit"
-          disabled={createMutation.isPending || symbols.length === 0}
-          className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
-        >
-          {createMutation.isPending ? "Creating..." : "Create Strategy"}
-        </button>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={handleBacktestFirst}
+            disabled={symbols.length === 0}
+            className="flex-1 py-3 bg-gray-700 text-gray-200 rounded-lg hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
+          >
+            Backtest First
+          </button>
+          <button
+            type="submit"
+            disabled={createMutation.isPending || symbols.length === 0}
+            className="flex-1 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
+          >
+            {createMutation.isPending ? "Creating..." : "Launch →"}
+          </button>
+        </div>
       </form>
+
+      {/* Standalone backtest panel — shown after clicking "Backtest First" */}
+      {showBacktest && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 mt-6">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-lg font-semibold text-white">Backtest</h3>
+            <button
+              onClick={() => setShowBacktest(false)}
+              className="text-xs text-gray-500 hover:text-gray-300"
+            >
+              ✕ Close
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 mb-0">
+            Testing: <span className="text-gray-400">{symbols.join(", ")}</span>
+            {" · "}{form.provider}/{form.modelId}
+            {" · "}{form.initialCapital.toLocaleString()} USDT capital
+          </p>
+          <StandaloneBacktestPanel
+            config={{
+              promptText: form.promptText,
+              symbols,
+              initialCapital: form.initialCapital,
+              maxLeverage: form.maxLeverage,
+              maxPositions: form.maxPositions,
+              llmProvider: form.provider,
+              llmModelId: form.modelId,
+              llmApiKey: form.apiKey || undefined,
+            }}
+            onLaunchPaper={(promptText) =>
+              withAuth(() => doCreate({ tradingMode: "virtual", promptText }))
+            }
+            onLaunchLive={(promptText) =>
+              withAuth(() => doCreate({ tradingMode: "live", promptText }))
+            }
+          />
+        </div>
+      )}
     </div>
   );
 }
