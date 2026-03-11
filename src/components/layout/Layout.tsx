@@ -63,6 +63,32 @@ export function Layout() {
 
       {/* Main content */}
       <main className="flex-1 overflow-auto">
+        {/* Top bar with auth */}
+        <div className="sticky top-0 z-30 bg-gray-950/80 backdrop-blur border-b border-gray-800/50">
+          <div className="max-w-7xl mx-auto px-6 py-2.5 flex items-center justify-end">
+            {isAuthenticated ? (
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-400 truncate max-w-[180px]" title={email ?? ""}>
+                  {email}
+                </span>
+                <button
+                  onClick={handleLogout}
+                  className="text-xs px-2.5 py-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors"
+                >
+                  Log out
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => open()}
+                className="text-xs px-3 py-1.5 rounded-lg bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors"
+              >
+                Login
+              </button>
+            )}
+          </div>
+        </div>
+
         <div className="max-w-7xl mx-auto p-6">
           <Outlet />
         </div>

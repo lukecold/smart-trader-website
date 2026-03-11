@@ -35,6 +35,7 @@ export function BacktestSection({ id, currentPrompt }: Props) {
   const [startDate, setStartDate] = useState(fmtDate(sevenDaysAgo));
   const [endDate, setEndDate] = useState(fmtDate(today));
   const [stepInterval, setStepInterval] = useState("4h");
+  const [initialCapital, setInitialCapital] = useState(10000);
   const [promptText, setPromptText] = useState(currentPrompt ?? "");
   const [showPrompt, setShowPrompt] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -93,6 +94,7 @@ export function BacktestSection({ id, currentPrompt }: Props) {
         body: JSON.stringify({
           id,
           prompt_text: promptText || undefined,
+          initial_capital: initialCapital,
           start_date: startDate,
           end_date: endDate,
           step_interval: stepInterval,
@@ -268,6 +270,18 @@ export function BacktestSection({ id, currentPrompt }: Props) {
             <option value="4h">4 hours</option>
             <option value="1d">1 day</option>
           </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Initial Capital</label>
+          <input
+            type="number"
+            value={initialCapital}
+            onChange={(e) => setInitialCapital(Number(e.target.value))}
+            disabled={phase === "running"}
+            min={100}
+            step={1000}
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500 disabled:opacity-50 w-28"
+          />
         </div>
 
         <div className="flex items-center gap-3">
