@@ -676,11 +676,11 @@ function ChatSection({ id }: { id: string }) {
     }
   };
 
-  const handleApplyProposed = () => {
-    if (!proposedPrompt) return;
+  const handleApplyProposed = (text: string) => {
+    if (!text.trim()) return;
     withAuth(() =>
       updatePrompt.mutate(
-        { id, prompt: proposedPrompt, note: "AI improvement" },
+        { id, prompt: text.trim(), note: "AI improvement" },
         { onSuccess: () => setProposedPrompt(null) }
       )
     );
@@ -748,20 +748,7 @@ function ChatSection({ id }: { id: string }) {
               </div>
             </div>
 
-            {/* Proposed prompt diff — shown above messages when AI suggests an improvement */}
-            {proposedPrompt && (
-              <div className="max-w-7xl mx-auto px-6 pb-2">
-                <PromptDiffBanner
-                  currentPrompt={currentPrompt ?? ""}
-                  proposedPrompt={proposedPrompt}
-                  onApply={handleApplyProposed}
-                  applying={updatePrompt.isPending}
-                  onDismiss={() => setProposedPrompt(null)}
-                />
-              </div>
-            )}
-
-            {/* Messages */}
+            {/* Messages + diff banner (improve mode) — single scrollable area */}
             <div
               ref={msgContainerRef}
               className="max-w-7xl mx-auto px-6 pb-4 max-h-[50vh] overflow-y-auto"
@@ -810,6 +797,19 @@ function ChatSection({ id }: { id: string }) {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {/* Diff banner — rendered inline below messages, only in improve mode */}
+              {mode === "improve" && proposedPrompt && !isStreaming && (
+                <div className="mt-3">
+                  <PromptDiffBanner
+                    currentPrompt={currentPrompt ?? ""}
+                    proposedPrompt={proposedPrompt}
+                    onApply={handleApplyProposed}
+                    applying={updatePrompt.isPending}
+                    onDismiss={() => setProposedPrompt(null)}
+                  />
                 </div>
               )}
             </div>
@@ -862,7 +862,7 @@ function ChatSection({ id }: { id: string }) {
 
 // ----- Prompt diff banner -----
 
-type DiffViewMode = "inline" | "split" | "full";
+type DiffViewMode = "inline" | "split" | "full" | "edit";
 
 function ViewBtn({
   active,
@@ -895,20 +895,29 @@ function PromptDiffBanner({
 }: {
   currentPrompt: string;
   proposedPrompt: string;
-  onApply: () => void;
+  onApply: (text: string) => void;
   applying: boolean;
   onDismiss: () => void;
 }) {
   // Default to "full" when there's no current prompt to diff against
   const [viewMode, setViewMode] = useState<DiffViewMode>(currentPrompt ? "inline" : "full");
-  const changes = diffLines(currentPrompt, proposedPrompt);
+  // editText tracks what will actually be applied — starts equal to proposedPrompt
+  const [editText, setEditText] = useState(proposedPrompt);
+
+  // Sync editText if the AI produces a new proposal
+  useEffect(() => { setEditText(proposedPrompt); }, [proposedPrompt]);
+
+  // Diff is always computed against the (possibly edited) text so the user
+  // can see how their edits compare to the current prompt in real time.
+  const changes = diffLines(currentPrompt, editText);
+  const isDirty = editText !== proposedPrompt;
 
   return (
     <div className="bg-green-900/20 border border-green-700/40 rounded-lg overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-green-700/30 flex-wrap gap-2">
         <span className="text-sm text-green-400 font-medium">
-          ✦ AI proposed an improved prompt
+          ✦ AI proposed an improved prompt{isDirty && <span className="text-yellow-400 ml-1">(edited)</span>}
         </span>
         <div className="flex items-center gap-2 flex-wrap">
           {/* View mode toggle */}
@@ -922,6 +931,9 @@ function PromptDiffBanner({
             <ViewBtn active={viewMode === "full"} onClick={() => setViewMode("full")}>
               Updated only
             </ViewBtn>
+            <ViewBtn active={viewMode === "edit"} onClick={() => setViewMode("edit")}>
+              ✎ Edit
+            </ViewBtn>
           </div>
           <button
             onClick={onDismiss}
@@ -930,8 +942,8 @@ function PromptDiffBanner({
             Dismiss
           </button>
           <button
-            onClick={onApply}
-            disabled={applying}
+            onClick={() => onApply(editText)}
+            disabled={applying || !editText.trim()}
             className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-500 disabled:opacity-40 transition-colors"
           >
             {applying ? "Applying…" : "Apply Prompt"}
@@ -939,19 +951,28 @@ function PromptDiffBanner({
         </div>
       </div>
 
-      {/* Diff/full body */}
-      <div className="max-h-72 overflow-y-auto text-xs font-mono">
+      {/* Body */}
+      <div className={cn("text-xs font-mono", viewMode !== "edit" && "max-h-72 overflow-y-auto")}>
         {viewMode === "inline" && <InlineDiff changes={changes} />}
         {viewMode === "split" && <SplitDiff changes={changes} />}
         {viewMode === "full" && (
           <pre className="px-4 py-3 text-gray-200 whitespace-pre-wrap leading-5">
-            {proposedPrompt}
+            {editText}
           </pre>
+        )}
+        {viewMode === "edit" && (
+          <textarea
+            value={editText}
+            onChange={(e) => setEditText(e.target.value)}
+            rows={16}
+            className="w-full bg-gray-950 px-4 py-3 text-gray-200 outline-none focus:ring-1 focus:ring-green-600 resize-y leading-5"
+            spellCheck={false}
+          />
         )}
       </div>
 
-      {/* Stats row */}
-      {viewMode !== "full" && (() => {
+      {/* Stats row — hidden in edit mode */}
+      {viewMode !== "full" && viewMode !== "edit" && (() => {
         const added = changes.filter((c) => c.added).reduce((n, c) => n + c.value.split("\n").length - 1, 0);
         const removed = changes.filter((c) => c.removed).reduce((n, c) => n + c.value.split("\n").length - 1, 0);
         return (
