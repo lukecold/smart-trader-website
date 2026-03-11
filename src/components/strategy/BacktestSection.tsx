@@ -16,17 +16,27 @@ type Phase = "idle" | "estimating" | "ready" | "running" | "done" | "error";
 interface EstimateResult {
   steps: number;
   estimatedMinutes: number;
+  maxSteps: number;
+  overLimit: boolean;
 }
 
-export function BacktestSection({ id }: { id: string }) {
-  // Default date range: last 30 days
-  const today = new Date();
-  const thirtyDaysAgo = new Date(today);
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+interface Props {
+  id: string;
+  /** When provided, the backtest tests this prompt instead of the strategy's stored one. */
+  currentPrompt?: string | null;
+}
 
-  const [startDate, setStartDate] = useState(fmtDate(thirtyDaysAgo));
+export function BacktestSection({ id, currentPrompt }: Props) {
+  // Default date range: last 7 days (fits 100 steps at 4h)
+  const today = new Date();
+  const sevenDaysAgo = new Date(today);
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+  const [startDate, setStartDate] = useState(fmtDate(sevenDaysAgo));
   const [endDate, setEndDate] = useState(fmtDate(today));
   const [stepInterval, setStepInterval] = useState("4h");
+  const [promptText, setPromptText] = useState(currentPrompt ?? "");
+  const [showPrompt, setShowPrompt] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [estimate, setEstimate] = useState<EstimateResult | null>(null);
   const [progress, setProgress] = useState({ step: 0, total: 0 });
@@ -35,6 +45,11 @@ export function BacktestSection({ id }: { id: string }) {
   const [summary, setSummary] = useState<BacktestSummary | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const abortRef = useRef<AbortController | null>(null);
+
+  // Sync when parent prompt changes (e.g. after applying AI-improved prompt)
+  useEffect(() => {
+    if (currentPrompt != null) setPromptText(currentPrompt);
+  }, [currentPrompt]);
 
   // Fetch estimate when dates or interval change
   useEffect(() => {
@@ -51,7 +66,7 @@ export function BacktestSection({ id }: { id: string }) {
       .then((json) => {
         const data = camelizeKeys(json.data) as EstimateResult;
         setEstimate(data);
-        setPhase("ready");
+        setPhase(data.overLimit ? "idle" : "ready");
       })
       .catch((err) => {
         if (err.name !== "AbortError") setPhase("idle");
@@ -77,6 +92,7 @@ export function BacktestSection({ id }: { id: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id,
+          prompt_text: promptText || undefined,
           start_date: startDate,
           end_date: endDate,
           step_interval: stepInterval,
@@ -84,7 +100,10 @@ export function BacktestSection({ id }: { id: string }) {
         signal: abort.signal,
       });
 
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok || !res.body) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.msg || `HTTP ${res.status}`);
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -168,7 +187,7 @@ export function BacktestSection({ id }: { id: string }) {
     } finally {
       abortRef.current = null;
     }
-  }, [id, startDate, endDate, stepInterval, estimate]);
+  }, [id, promptText, startDate, endDate, stepInterval, estimate]);
 
   const stopBacktest = () => {
     abortRef.current?.abort();
@@ -178,9 +197,41 @@ export function BacktestSection({ id }: { id: string }) {
   const progressPct =
     progress.total > 0 ? Math.round((progress.step / progress.total) * 100) : 0;
 
+  const overLimit = estimate?.overLimit ?? false;
+
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-      <h3 className="text-lg font-semibold text-white mb-4">Backtest</h3>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-white">Backtest</h3>
+        <button
+          onClick={() => setShowPrompt(!showPrompt)}
+          className={cn(
+            "text-xs px-3 py-1.5 rounded-lg transition-colors",
+            showPrompt
+              ? "bg-blue-600/20 text-blue-400"
+              : "text-gray-500 hover:text-gray-300 hover:bg-gray-800"
+          )}
+        >
+          {showPrompt ? "Hide Prompt" : "Custom Prompt"}
+        </button>
+      </div>
+
+      {/* Editable prompt for backtesting */}
+      {showPrompt && (
+        <div className="mb-4">
+          <label className="block text-xs text-gray-500 mb-1">
+            Prompt to test (leave empty to use the strategy's current prompt)
+          </label>
+          <textarea
+            value={promptText}
+            onChange={(e) => setPromptText(e.target.value)}
+            disabled={phase === "running"}
+            rows={6}
+            placeholder="Paste or write a prompt to backtest..."
+            className="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-3 text-sm text-gray-200 outline-none focus:border-blue-500 resize-y font-mono leading-relaxed disabled:opacity-50"
+          />
+        </div>
+      )}
 
       {/* Controls */}
       <div className="flex flex-wrap items-end gap-4 mb-4">
@@ -205,13 +256,14 @@ export function BacktestSection({ id }: { id: string }) {
           />
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Step</label>
+          <label className="block text-xs text-gray-500 mb-1">Step Interval</label>
           <select
             value={stepInterval}
             onChange={(e) => setStepInterval(e.target.value)}
             disabled={phase === "running"}
             className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500 disabled:opacity-50"
           >
+            <option value="15m">15 minutes</option>
             <option value="1h">1 hour</option>
             <option value="4h">4 hours</option>
             <option value="1d">1 day</option>
@@ -219,9 +271,9 @@ export function BacktestSection({ id }: { id: string }) {
         </div>
 
         <div className="flex items-center gap-3">
-          {estimate && phase !== "running" && (
+          {estimate && phase !== "running" && !overLimit && (
             <span className="text-xs text-gray-500">
-              {estimate.steps} LLM calls (~{estimate.estimatedMinutes} min)
+              {estimate.steps} steps (~{estimate.estimatedMinutes} min)
             </span>
           )}
 
@@ -235,7 +287,7 @@ export function BacktestSection({ id }: { id: string }) {
           ) : (
             <button
               onClick={runBacktest}
-              disabled={phase === "estimating" || !estimate}
+              disabled={phase === "estimating" || !estimate || overLimit}
               className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium transition-colors"
             >
               Run Backtest
@@ -243,6 +295,13 @@ export function BacktestSection({ id }: { id: string }) {
           )}
         </div>
       </div>
+
+      {/* Over-limit warning */}
+      {overLimit && estimate && (
+        <div className="mb-4 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-sm text-yellow-400">
+          {estimate.steps} steps exceeds the limit of {estimate.maxSteps}. Please shorten the time range or increase the step interval.
+        </div>
+      )}
 
       {/* Progress bar */}
       {phase === "running" && (

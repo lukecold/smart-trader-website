@@ -569,11 +569,11 @@ function SplitDiff({ changes }: { changes: Change[] }) {
   const maxLen = Math.max(leftLines.length, rightLines.length);
 
   return (
-    <table className="w-full border-collapse">
+    <table className="w-full table-fixed border-collapse">
       <colgroup>
-        <col className="w-1/2" />
-        <col className="w-px bg-gray-700" />
-        <col className="w-1/2" />
+        <col style={{ width: "calc(50% - 0.5px)" }} />
+        <col style={{ width: "1px" }} />
+        <col style={{ width: "calc(50% - 0.5px)" }} />
       </colgroup>
       <tbody>
         {Array.from({ length: maxLen }).map((_, i) => {
@@ -583,7 +583,7 @@ function SplitDiff({ changes }: { changes: Change[] }) {
             <tr key={i}>
               <td
                 className={cn(
-                  "px-4 py-0.5 whitespace-pre leading-5 align-top",
+                  "px-4 py-0.5 whitespace-pre-wrap break-words leading-5 align-top overflow-hidden",
                   left?.type === "removed"
                     ? "bg-red-900/25 text-red-300"
                     : "text-gray-400"
@@ -591,10 +591,10 @@ function SplitDiff({ changes }: { changes: Change[] }) {
               >
                 {left?.text ?? ""}
               </td>
-              <td className="w-px bg-gray-700" />
+              <td className="bg-gray-700" />
               <td
                 className={cn(
-                  "px-4 py-0.5 whitespace-pre leading-5 align-top",
+                  "px-4 py-0.5 whitespace-pre-wrap break-words leading-5 align-top overflow-hidden",
                   right?.type === "added"
                     ? "bg-green-900/25 text-green-300"
                     : "text-gray-400"

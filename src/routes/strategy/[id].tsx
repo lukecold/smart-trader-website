@@ -34,7 +34,7 @@ export function StrategyDetail() {
       <PortfolioSection id={id} />
       <HoldingsSection id={id} />
       <PromptSectionWrapper id={id} />
-      <BacktestSection id={id} />
+      <BacktestSectionWrapper id={id} />
       <TradeHistorySection id={id} />
       <ChatSection id={id} />
     </div>
@@ -191,6 +191,11 @@ function PortfolioSection({ id }: { id: string }) {
 function PromptSectionWrapper({ id }: { id: string }) {
   const { data } = useStrategyPerformance(id);
   return <PromptSection id={id} currentPrompt={data?.prompt ?? null} />;
+}
+
+function BacktestSectionWrapper({ id }: { id: string }) {
+  const { data } = useStrategyPerformance(id);
+  return <BacktestSection id={id} currentPrompt={data?.prompt ?? null} />;
 }
 
 // ----- Holdings -----
