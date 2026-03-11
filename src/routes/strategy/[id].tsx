@@ -484,26 +484,23 @@ interface Message {
 const QUICK_PROMPTS = [
   "Why did you make these recent trades?",
   "Analyze the current risk exposure.",
-  "How can I improve this strategy?",
+  "Suggest improvements to the strategy prompt.",
   "Summarize the performance so far.",
 ];
-
-type ChatMode = "chat" | "improve";
 
 function loadMsgs(key: string): Message[] {
   try { return JSON.parse(localStorage.getItem(key) ?? "[]"); } catch { return []; }
 }
 
-// ChatSection: fixed bottom bar. Two modes — Chat (general) and Improve Prompt.
+// ChatSection: fixed bottom bar. The AI auto-detects intent — if the user
+// asks for a prompt improvement it streams an explanation then a code block
+// (diff banner); otherwise it answers as a general trading advisor.
 // History persists in localStorage and survives deployments.
 function ChatSection({ id }: { id: string }) {
   const chatKey = `smt_chat_${id}`;
-  const improveKey = `smt_improve_${id}`;
 
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<ChatMode>("chat");
   const [messages, setMessages] = useState<Message[]>(() => loadMsgs(chatKey));
-  const [improveMessages, setImproveMessages] = useState<Message[]>(() => loadMsgs(improveKey));
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [proposedPrompt, setProposedPrompt] = useState<string | null>(null);
@@ -519,15 +516,11 @@ function ChatSection({ id }: { id: string }) {
   const { withAuth } = useAuthGuard();
 
   const currentPrompt = perf?.prompt ?? null;
-  const activeMessages = mode === "chat" ? messages : improveMessages;
 
   // Persist to localStorage (skip streaming placeholders)
   useEffect(() => {
     localStorage.setItem(chatKey, JSON.stringify(messages.filter((m) => !m.streaming)));
   }, [messages, chatKey]);
-  useEffect(() => {
-    localStorage.setItem(improveKey, JSON.stringify(improveMessages.filter((m) => !m.streaming)));
-  }, [improveMessages, improveKey]);
 
   // Smart scroll: only scroll the container, not the page
   useEffect(() => {
@@ -535,13 +528,13 @@ function ChatSection({ id }: { id: string }) {
     if (!el || !open) return;
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
     if (dist < 80) el.scrollTop = el.scrollHeight;
-  }, [activeMessages, open]);
+  }, [messages, open]);
 
   // Collapse when clicking outside
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node))
+      if (!isStreaming && panelRef.current && !panelRef.current.contains(e.target as Node))
         setOpen(false);
     };
     document.addEventListener("mousedown", onDown);
@@ -574,11 +567,6 @@ function ChatSection({ id }: { id: string }) {
       setOpen(true);
       setProposedPrompt(null);
 
-      // Capture mode and setters at call time (send is recreated on mode change)
-      const currentMode = mode;
-      const setMsgs = currentMode === "chat" ? setMessages : setImproveMessages;
-      const currentMessages = currentMode === "chat" ? messages : improveMessages;
-
       // Inject cycle data when user mentions specific cycles
       let messageWithCtx = trimmed;
       const cycleRange = parseCycleRange(trimmed);
@@ -587,19 +575,11 @@ function ChatSection({ id }: { id: string }) {
         messageWithCtx = `${trimmed}\n\n[Cycle context]\n${ctx}`;
       }
 
-      const history = currentMessages
+      const history = messages
         .filter((m) => !m.streaming)
         .map((m) => ({ role: m.role, content: m.content }));
 
-      // For improve mode first turn, prepend the current prompt as context
-      let finalMessage = messageWithCtx;
-      if (currentMode === "improve" && history.length === 0 && currentPrompt) {
-        finalMessage =
-          `Here is the current strategy prompt:\n\n\`\`\`\n${currentPrompt}\n\`\`\`\n\n` +
-          `My request: ${messageWithCtx}`;
-      }
-
-      setMsgs((prev) => [
+      setMessages((prev) => [
         ...prev,
         { role: "user", content: trimmed },   // show clean text in UI
         { role: "assistant", content: "", streaming: true },
@@ -609,16 +589,11 @@ function ChatSection({ id }: { id: string }) {
       const abort = new AbortController();
       abortRef.current = abort;
 
-      const endpoint =
-        currentMode === "improve"
-          ? "/api/v1/strategies/improve-prompt"
-          : "/api/v1/strategies/chat";
-
       try {
-        const res = await fetch(endpoint, {
+        const res = await fetch("/api/v1/strategies/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id, message: finalMessage, history }),
+          body: JSON.stringify({ id, message: messageWithCtx, history }),
           signal: abort.signal,
         });
 
@@ -647,7 +622,7 @@ function ChatSection({ id }: { id: string }) {
                 chunk = `⚠ ${(parsed as { error: string }).error}`;
               else continue;
               fullContent += chunk;
-              setMsgs((prev) => {
+              setMessages((prev) => {
                 const copy = [...prev];
                 const last = copy[copy.length - 1];
                 if (last?.streaming)
@@ -658,10 +633,12 @@ function ChatSection({ id }: { id: string }) {
           }
         }
 
-        if (currentMode === "improve") extractProposedPrompt(fullContent);
+        // Always try to extract a proposed prompt — the AI may include a
+        // strategy code block for both explicit improvements and general chat.
+        extractProposedPrompt(fullContent);
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
-          setMsgs((prev) => {
+          setMessages((prev) => {
             const copy = [...prev];
             const last = copy[copy.length - 1];
             if (last?.streaming)
@@ -674,12 +651,12 @@ function ChatSection({ id }: { id: string }) {
           });
         }
       } finally {
-        setMsgs((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)));
+        setMessages((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)));
         setIsStreaming(false);
         abortRef.current = null;
       }
     },
-    [id, mode, messages, improveMessages, isStreaming, currentPrompt, cycles, extractProposedPrompt]
+    [id, messages, isStreaming, cycles, extractProposedPrompt]
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -700,8 +677,8 @@ function ChatSection({ id }: { id: string }) {
   };
 
   const clearHistory = () => {
-    if (mode === "chat") setMessages([]);
-    else { setImproveMessages([]); setProposedPrompt(null); }
+    setMessages([]);
+    setProposedPrompt(null);
   };
 
   return (
@@ -716,32 +693,10 @@ function ChatSection({ id }: { id: string }) {
             <div className="max-w-7xl mx-auto px-6 py-2.5 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <span className="text-sm font-semibold text-white">Ask AI</span>
-                {/* Mode toggle */}
-                <div className="flex rounded-lg bg-gray-800 p-0.5 text-xs">
-                  <button
-                    onClick={() => { setMode("chat"); setProposedPrompt(null); }}
-                    className={cn(
-                      "px-2.5 py-1 rounded-md transition-colors",
-                      mode === "chat" ? "bg-gray-600 text-white" : "text-gray-400 hover:text-gray-200"
-                    )}
-                  >
-                    Chat
-                  </button>
-                  {currentPrompt && (
-                    <button
-                      onClick={() => { setMode("improve"); setProposedPrompt(null); }}
-                      className={cn(
-                        "px-2.5 py-1 rounded-md transition-colors",
-                        mode === "improve" ? "bg-blue-600 text-white" : "text-gray-400 hover:text-gray-200"
-                      )}
-                    >
-                      Improve Prompt
-                    </button>
-                  )}
-                </div>
+                <span className="text-xs text-gray-500">AI auto-detects prompt improvements</span>
               </div>
               <div className="flex items-center gap-3">
-                {activeMessages.length > 0 && (
+                {messages.length > 0 && (
                   <button
                     type="button"
                     onClick={clearHistory}
@@ -761,43 +716,35 @@ function ChatSection({ id }: { id: string }) {
               </div>
             </div>
 
-            {/* Messages + diff banner (improve mode) — single scrollable area */}
+            {/* Messages — single scrollable area */}
             <div
               ref={msgContainerRef}
               className="max-w-7xl mx-auto px-6 pb-4 max-h-[50vh] overflow-y-auto"
             >
-              {activeMessages.length === 0 ? (
-                mode === "chat" ? (
-                  <div className="flex flex-wrap gap-2">
-                    {QUICK_PROMPTS.map((q) => (
-                      <button
-                        key={q}
-                        type="button"
-                        onClick={() => send(q)}
-                        disabled={isStreaming}
-                        className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-400 hover:border-blue-500 hover:text-blue-300 transition-colors disabled:opacity-40"
-                      >
-                        {q}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-gray-500 italic">
-                    Describe how to improve the prompt. The AI will reply with an updated version
-                    and a diff so you can review before applying.
-                  </p>
-                )
+              {messages.length === 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {QUICK_PROMPTS.map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={() => send(q)}
+                      disabled={isStreaming}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-400 hover:border-blue-500 hover:text-blue-300 transition-colors disabled:opacity-40"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
               ) : (
                 <div className="space-y-3">
-                  {activeMessages.map((m, i) => {
-                    // In improve mode, embed the diff banner inside the last assistant bubble
+                  {messages.map((m, i) => {
+                    // Embed the diff banner inside the last assistant bubble
                     // once streaming is complete and we have a proposed prompt.
                     const embedDiff =
-                      mode === "improve" &&
-                      proposedPrompt &&
+                      !!proposedPrompt &&
                       !isStreaming &&
                       m.role === "assistant" &&
-                      i === activeMessages.length - 1;
+                      i === messages.length - 1;
 
                     // Strip the raw ```strategy...``` block from the displayed text —
                     // we'll show the diff banner instead of the raw code fence.
@@ -864,11 +811,7 @@ function ChatSection({ id }: { id: string }) {
             onFocus={() => setOpen(true)}
             onKeyDown={handleKeyDown}
             disabled={isStreaming}
-            placeholder={
-              mode === "improve"
-                ? "Describe how to improve the prompt… (Enter to send)"
-                : "Ask AI about your strategy…  (Enter · Shift+Enter for newline)"
-            }
+            placeholder="Ask about your strategy or say 'improve the prompt'…  (Enter · Shift+Enter for newline)"
             rows={1}
             className="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white text-sm outline-none focus:border-blue-500 resize-none disabled:opacity-50 placeholder-gray-600"
           />
