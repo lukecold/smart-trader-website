@@ -1,18 +1,11 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState } from "react";
 import { diffLines, type Change } from "diff";
 import { cn } from "@/lib/utils";
 import { usePromptHistory, useUpdatePrompt } from "@/api/strategies";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
-import { useAuthStore } from "@/stores/auth";
 
-type Mode = "view" | "edit" | "improve" | "history";
+type Mode = "view" | "edit" | "history";
 type DiffViewMode = "inline" | "split";
-
-interface ImproveMsg {
-  role: "user" | "assistant";
-  content: string;
-  streaming?: boolean;
-}
 
 interface Props {
   id: string;
@@ -27,14 +20,6 @@ export function PromptSection({ id, currentPrompt }: Props) {
   const [editText, setEditText] = useState("");
   const [editNote, setEditNote] = useState("");
 
-  // Improve with AI state
-  const [improveMessages, setImproveMessages] = useState<ImproveMsg[]>([]);
-  const [improveInput, setImproveInput] = useState("");
-  const [isImproving, setIsImproving] = useState(false);
-  const [proposedPrompt, setProposedPrompt] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const chatContainerRef = useRef<HTMLDivElement>(null);
-
   // History / diff state
   const [selectedVersions, setSelectedVersions] = useState<number[]>([]);
   const [diffMode, setDiffMode] = useState<DiffViewMode>("inline");
@@ -42,18 +27,6 @@ export function PromptSection({ id, currentPrompt }: Props) {
   const { data: versions } = usePromptHistory(id);
   const updatePrompt = useUpdatePrompt();
   const { withAuth } = useAuthGuard();
-
-  // Scroll the chat container (not the page) to the bottom — but only when
-  // the user is already near the bottom, so manual scroll-up isn't hijacked.
-  useEffect(() => {
-    if (mode !== "improve") return;
-    const el = chatContainerRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distanceFromBottom < 80) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [improveMessages, mode]);
 
   // ---------- Edit ----------
 
@@ -69,150 +42,6 @@ export function PromptSection({ id, currentPrompt }: Props) {
       updatePrompt.mutate(
         { id, prompt: editText.trim(), note: editNote || "manual edit" },
         { onSuccess: () => setMode("view") }
-      );
-    });
-  };
-
-  // ---------- Improve with AI ----------
-
-  const extractProposedPrompt = useCallback((text: string) => {
-    const m = text.match(/```strategy\n([\s\S]*?)```/);
-    if (m) setProposedPrompt(m[1].trim());
-  }, []);
-
-  const sendImprove = useCallback(
-    async (text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed || isImproving) return;
-      setImproveInput("");
-      setProposedPrompt(null);
-
-      const history = improveMessages
-        .filter((m) => !m.streaming)
-        .map((m) => ({ role: m.role, content: m.content }));
-
-      // For the first message, prepend the current prompt as context
-      const messageText =
-        history.length === 0 && currentPrompt
-          ? `Here is the current strategy prompt:\n\n\`\`\`\n${currentPrompt}\n\`\`\`\n\nMy request: ${trimmed}`
-          : trimmed;
-
-      setImproveMessages((prev) => [
-        ...prev,
-        { role: "user", content: trimmed }, // show clean user text in UI
-        { role: "assistant", content: "", streaming: true },
-      ]);
-      setIsImproving(true);
-
-      const abort = new AbortController();
-      abortRef.current = abort;
-
-      const { sessionToken } = useAuthStore.getState();
-
-      try {
-        const res = await fetch("/api/v1/strategies/improve-prompt", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
-          },
-          body: JSON.stringify({ id, message: messageText, history }),
-          signal: abort.signal,
-        });
-
-        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = "";
-        let fullContent = "";
-
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buf += decoder.decode(value, { stream: true });
-          const lines = buf.split("\n");
-          buf = lines.pop() ?? "";
-
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            const payload = line.slice(6);
-            if (payload === "[DONE]") break;
-
-            try {
-              const parsed: unknown = JSON.parse(payload);
-              let chunk: string;
-              if (typeof parsed === "string") {
-                chunk = parsed;
-              } else if (
-                parsed &&
-                typeof parsed === "object" &&
-                "error" in parsed
-              ) {
-                chunk = `⚠ ${(parsed as { error: string }).error}`;
-              } else {
-                continue;
-              }
-              fullContent += chunk;
-              setImproveMessages((prev) => {
-                const copy = [...prev];
-                const last = copy[copy.length - 1];
-                if (last?.streaming) {
-                  copy[copy.length - 1] = {
-                    ...last,
-                    content: last.content + chunk,
-                  };
-                }
-                return copy;
-              });
-            } catch {
-              // ignore unparseable lines
-            }
-          }
-        }
-
-        extractProposedPrompt(fullContent);
-      } catch (err) {
-        if ((err as Error).name !== "AbortError") {
-          setImproveMessages((prev) => {
-            const copy = [...prev];
-            const last = copy[copy.length - 1];
-            if (last?.streaming) {
-              copy[copy.length - 1] = {
-                ...last,
-                content:
-                  last.content || "Error: " + (err as Error).message,
-                streaming: false,
-              };
-            }
-            return copy;
-          });
-        }
-      } finally {
-        setImproveMessages((prev) =>
-          prev.map((m) => (m.streaming ? { ...m, streaming: false } : m))
-        );
-        setIsImproving(false);
-        abortRef.current = null;
-      }
-    },
-    [id, currentPrompt, improveMessages, isImproving, extractProposedPrompt]
-  );
-
-  const handleApplyProposed = () => {
-    if (!proposedPrompt) return;
-    withAuth(() => {
-      updatePrompt.mutate(
-        { id, prompt: proposedPrompt, note: "AI improvement" },
-        {
-          onSuccess: () => {
-            setMode("view");
-            setProposedPrompt(null);
-            setImproveMessages([]);
-          },
-        }
       );
     });
   };
@@ -276,9 +105,6 @@ export function PromptSection({ id, currentPrompt }: Props) {
             <TabBtn active={mode === "edit"} onClick={handleOpenEdit}>
               Edit
             </TabBtn>
-            <TabBtn active={mode === "improve"} onClick={() => setMode("improve")}>
-              Improve with AI
-            </TabBtn>
             <TabBtn active={mode === "history"} onClick={() => setMode("history")}>
               History
               {versions && versions.length > 0 && (
@@ -333,107 +159,6 @@ export function PromptSection({ id, currentPrompt }: Props) {
             >
               Cancel
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Improve with AI ── */}
-      {mode === "improve" && (
-        <div className="space-y-3">
-          {/* Proposed prompt banner with diff */}
-          {proposedPrompt && (
-            <ProposedPromptDiff
-              currentPrompt={currentPrompt ?? ""}
-              proposedPrompt={proposedPrompt}
-              onApply={handleApplyProposed}
-              applying={updatePrompt.isPending}
-            />
-          )}
-
-          {/* Chat messages */}
-          <div ref={chatContainerRef} className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
-            {improveMessages.length === 0 && (
-              <p className="text-sm text-gray-500 italic">
-                Describe how you'd like to improve the prompt. The AI will
-                suggest an updated version.
-              </p>
-            )}
-            {improveMessages.map((m, i) => (
-              <div
-                key={i}
-                className={cn(
-                  "flex",
-                  m.role === "user" ? "justify-end" : "justify-start"
-                )}
-              >
-                <div
-                  className={cn(
-                    "max-w-[85%] rounded-xl px-4 py-2.5 text-sm whitespace-pre-wrap",
-                    m.role === "user"
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-800 text-gray-200 border border-gray-700"
-                  )}
-                >
-                  {m.content}
-                  {m.streaming && (
-                    <span className="inline-flex gap-0.5 ml-1">
-                      <span
-                        className="animate-bounce"
-                        style={{ animationDelay: "0ms" }}
-                      >
-                        ·
-                      </span>
-                      <span
-                        className="animate-bounce"
-                        style={{ animationDelay: "150ms" }}
-                      >
-                        ·
-                      </span>
-                      <span
-                        className="animate-bounce"
-                        style={{ animationDelay: "300ms" }}
-                      >
-                        ·
-                      </span>
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Input */}
-          <div className="flex gap-2">
-            <textarea
-              value={improveInput}
-              onChange={(e) => setImproveInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  sendImprove(improveInput);
-                }
-              }}
-              disabled={isImproving}
-              placeholder="Describe how to improve the prompt… (Enter to send)"
-              rows={2}
-              className="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 outline-none focus:border-blue-500 resize-none disabled:opacity-50"
-            />
-            {isImproving ? (
-              <button
-                onClick={() => abortRef.current?.abort()}
-                className="px-3 py-2 rounded-lg bg-red-600/20 text-red-400 text-sm hover:bg-red-600/30 transition-colors whitespace-nowrap self-end"
-              >
-                Stop
-              </button>
-            ) : (
-              <button
-                onClick={() => sendImprove(improveInput)}
-                disabled={!improveInput.trim()}
-                className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-500 disabled:opacity-40 transition-colors whitespace-nowrap self-end"
-              >
-                Send
-              </button>
-            )}
           </div>
         </div>
       )}
@@ -536,7 +261,7 @@ export function PromptSection({ id, currentPrompt }: Props) {
 
 // ─── Diff renderers ────────────────────────────────────────────────────────
 
-function InlineDiff({ changes }: { changes: Change[] }) {
+export function InlineDiff({ changes }: { changes: Change[] }) {
   return (
     <div>
       {changes.map((change, i) => {
@@ -565,7 +290,6 @@ function InlineDiff({ changes }: { changes: Change[] }) {
 }
 
 function SplitDiff({ changes }: { changes: Change[] }) {
-  // Build parallel arrays of left/right lines
   const leftLines: { text: string; type: "removed" | "unchanged" }[] = [];
   const rightLines: { text: string; type: "added" | "unchanged" }[] = [];
 
@@ -627,92 +351,8 @@ function SplitDiff({ changes }: { changes: Change[] }) {
   );
 }
 
-// ─── Proposed prompt diff ────────────────────────────────────────────────────
-
-function ProposedPromptDiff({
-  currentPrompt,
-  proposedPrompt,
-  onApply,
-  applying,
-}: {
-  currentPrompt: string;
-  proposedPrompt: string;
-  onApply: () => void;
-  applying: boolean;
-}) {
-  const [viewMode, setViewMode] = useState<"diff" | "full">("diff");
-  const [proposedDiffMode, setProposedDiffMode] = useState<DiffViewMode>("inline");
-  const changes = diffLines(currentPrompt, proposedPrompt);
-
-  return (
-    <div className="bg-green-900/20 border border-green-700/40 rounded-lg overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-green-700/30">
-        <span className="text-sm text-green-400 font-medium">
-          AI proposed an improved prompt
-        </span>
-        <div className="flex items-center gap-2">
-          <div className="flex gap-1 mr-2">
-            <DiffModeBtn
-              active={viewMode === "diff"}
-              onClick={() => setViewMode("diff")}
-            >
-              Diff
-            </DiffModeBtn>
-            <DiffModeBtn
-              active={viewMode === "full"}
-              onClick={() => setViewMode("full")}
-            >
-              Full
-            </DiffModeBtn>
-          </div>
-          {viewMode === "diff" && (
-            <div className="flex gap-1 mr-2">
-              <DiffModeBtn
-                active={proposedDiffMode === "inline"}
-                onClick={() => setProposedDiffMode("inline")}
-              >
-                Inline
-              </DiffModeBtn>
-              <DiffModeBtn
-                active={proposedDiffMode === "split"}
-                onClick={() => setProposedDiffMode("split")}
-              >
-                Side by side
-              </DiffModeBtn>
-            </div>
-          )}
-          <button
-            onClick={onApply}
-            disabled={applying}
-            className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-500 disabled:opacity-40 transition-colors"
-          >
-            {applying ? "Applying…" : "Apply Prompt"}
-          </button>
-        </div>
-      </div>
-
-      {/* Body */}
-      <div className="max-h-64 overflow-y-auto text-xs font-mono">
-        {viewMode === "diff" ? (
-          proposedDiffMode === "inline" ? (
-            <InlineDiff changes={changes} />
-          ) : (
-            <SplitDiff changes={changes} />
-          )
-        ) : (
-          <pre className="px-4 py-3 text-gray-300 whitespace-pre-wrap leading-5">
-            {proposedPrompt}
-          </pre>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-/** Split a diff chunk value into display lines, dropping the trailing empty. */
 function splitLines(value: string): string[] {
   const lines = value.split("\n");
   if (lines[lines.length - 1] === "") lines.pop();

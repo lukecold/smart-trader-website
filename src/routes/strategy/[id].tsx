@@ -8,10 +8,14 @@ import {
   useEquityCurve,
   useClosePosition,
   usePruneSnapshots,
+  useUpdatePrompt,
 } from "@/api/strategies";
 import { formatCurrency, formatPct, formatNumber, cn } from "@/lib/utils";
-import { PromptSection } from "@/components/strategy/PromptSection";
+import { PromptSection, InlineDiff } from "@/components/strategy/PromptSection";
 import { BacktestSection } from "@/components/strategy/BacktestSection";
+import { diffLines } from "diff";
+import { useAuthGuard } from "@/hooks/useAuthGuard";
+import type { ComposeCycle } from "@/types/strategy";
 import {
   AreaChart,
   Area,
@@ -418,6 +422,44 @@ function TradeHistorySection({ id }: { id: string }) {
   );
 }
 
+// ----- AI Chat helpers -----
+
+/** Parse mentions like "since cycle 500", "cycle 400-410", "cycle 500". */
+function parseCycleRange(text: string): { from: number; to: number } | null {
+  let m = text.match(/\bsince\s+cycles?\s+(\d+)\b/i);
+  if (m) return { from: parseInt(m[1]), to: Infinity };
+  m = text.match(/\bcycles?\s+(\d+)\s*(?:[-–]|to)\s*(\d+)\b/i);
+  if (m) return { from: parseInt(m[1]), to: parseInt(m[2]) };
+  m = text.match(/\bcycles?\s+(\d+)\b/i);
+  if (m) { const n = parseInt(m[1]); return { from: n, to: n }; }
+  return null;
+}
+
+function buildCycleContext(cycles: ComposeCycle[], range: { from: number; to: number }): string {
+  const filtered = cycles.filter(
+    (c) => c.cycleIndex >= range.from && c.cycleIndex <= range.to
+  );
+  if (!filtered.length) return "No cycles found in that range.";
+  return filtered
+    .map((c) => {
+      const acts = c.actions
+        .map(
+          (a) =>
+            `    ${a.action} ${a.symbol}` +
+            (a.quantity != null ? ` qty=${a.quantity}` : "") +
+            (a.avgExecPrice != null ? ` @${a.avgExecPrice.toFixed(2)}` : "") +
+            (a.realizedPnl ? ` pnl=${a.realizedPnl.toFixed(2)}` : "")
+        )
+        .join("\n");
+      return (
+        `Cycle ${c.cycleIndex} (${new Date(c.createdAt).toLocaleString()}):\n` +
+        `  Rationale: ${c.rationale ?? "N/A"}\n` +
+        `  Actions:\n${acts || "    (none)"}`
+      );
+    })
+    .join("\n\n");
+}
+
 // ----- AI Chat -----
 
 interface Message {
@@ -433,37 +475,67 @@ const QUICK_PROMPTS = [
   "Summarize the performance so far.",
 ];
 
-// ChatSection renders as a fixed bottom bar (right of the w-64 sidebar).
-// Clicking the input or a quick prompt expands it to show conversation history.
-// Clicking outside collapses it back to the compact input strip.
+type ChatMode = "chat" | "improve";
+
+function loadMsgs(key: string): Message[] {
+  try { return JSON.parse(localStorage.getItem(key) ?? "[]"); } catch { return []; }
+}
+
+// ChatSection: fixed bottom bar. Two modes — Chat (general) and Improve Prompt.
+// History persists in localStorage and survives deployments.
 function ChatSection({ id }: { id: string }) {
+  const chatKey = `smt_chat_${id}`;
+  const improveKey = `smt_improve_${id}`;
+
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [mode, setMode] = useState<ChatMode>("chat");
+  const [messages, setMessages] = useState<Message[]>(() => loadMsgs(chatKey));
+  const [improveMessages, setImproveMessages] = useState<Message[]>(() => loadMsgs(improveKey));
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [proposedPrompt, setProposedPrompt] = useState<string | null>(null);
+
   const panelRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const msgContainerRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Collapse when user clicks outside the panel
+  const { data: perf } = useStrategyPerformance(id);
+  const { data: cycles } = useStrategyDetail(id);
+  const updatePrompt = useUpdatePrompt();
+  const { withAuth } = useAuthGuard();
+
+  const currentPrompt = perf?.prompt ?? null;
+  const activeMessages = mode === "chat" ? messages : improveMessages;
+
+  // Persist to localStorage (skip streaming placeholders)
+  useEffect(() => {
+    localStorage.setItem(chatKey, JSON.stringify(messages.filter((m) => !m.streaming)));
+  }, [messages, chatKey]);
+  useEffect(() => {
+    localStorage.setItem(improveKey, JSON.stringify(improveMessages.filter((m) => !m.streaming)));
+  }, [improveMessages, improveKey]);
+
+  // Smart scroll: only scroll the container, not the page
+  useEffect(() => {
+    const el = msgContainerRef.current;
+    if (!el || !open) return;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (dist < 80) el.scrollTop = el.scrollHeight;
+  }, [activeMessages, open]);
+
+  // Collapse when clicking outside
   useEffect(() => {
     if (!open) return;
-    const handleMouseDown = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+    const onDown = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node))
         setOpen(false);
-      }
     };
-    document.addEventListener("mousedown", handleMouseDown);
-    return () => document.removeEventListener("mousedown", handleMouseDown);
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
-  // Auto-scroll to newest message
-  useEffect(() => {
-    if (open) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, open]);
-
-  // Focus the input when the panel opens
+  // Focus textarea when opened
   useEffect(() => {
     if (open) {
       const t = setTimeout(() => textareaRef.current?.focus(), 50);
@@ -471,20 +543,48 @@ function ChatSection({ id }: { id: string }) {
     }
   }, [open]);
 
+  const extractProposedPrompt = useCallback((text: string) => {
+    // Accept ```strategy (with optional whitespace/newline after the tag)
+    const m = text.match(/```strategy[\s\r\n]+([\s\S]*?)```/);
+    if (m) setProposedPrompt(m[1].trim());
+  }, []);
+
   const send = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || isStreaming) return;
       setInput("");
       setOpen(true);
+      setProposedPrompt(null);
 
-      const history = messages
+      // Capture mode and setters at call time (send is recreated on mode change)
+      const currentMode = mode;
+      const setMsgs = currentMode === "chat" ? setMessages : setImproveMessages;
+      const currentMessages = currentMode === "chat" ? messages : improveMessages;
+
+      // Inject cycle data when user mentions specific cycles
+      let messageWithCtx = trimmed;
+      const cycleRange = parseCycleRange(trimmed);
+      if (cycleRange && cycles?.length) {
+        const ctx = buildCycleContext(cycles, cycleRange);
+        messageWithCtx = `${trimmed}\n\n[Cycle context]\n${ctx}`;
+      }
+
+      const history = currentMessages
         .filter((m) => !m.streaming)
         .map((m) => ({ role: m.role, content: m.content }));
 
-      setMessages((prev) => [
+      // For improve mode first turn, prepend the current prompt as context
+      let finalMessage = messageWithCtx;
+      if (currentMode === "improve" && history.length === 0 && currentPrompt) {
+        finalMessage =
+          `Here is the current strategy prompt:\n\n\`\`\`\n${currentPrompt}\n\`\`\`\n\n` +
+          `My request: ${messageWithCtx}`;
+      }
+
+      setMsgs((prev) => [
         ...prev,
-        { role: "user", content: trimmed },
+        { role: "user", content: trimmed },   // show clean text in UI
         { role: "assistant", content: "", streaming: true },
       ]);
       setIsStreaming(true);
@@ -492,11 +592,16 @@ function ChatSection({ id }: { id: string }) {
       const abort = new AbortController();
       abortRef.current = abort;
 
+      const endpoint =
+        currentMode === "improve"
+          ? "/api/v1/strategies/improve-prompt"
+          : "/api/v1/strategies/chat";
+
       try {
-        const res = await fetch("/api/v1/strategies/chat", {
+        const res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id, message: trimmed, history }),
+          body: JSON.stringify({ id, message: finalMessage, history }),
           signal: abort.signal,
         });
 
@@ -505,70 +610,59 @@ function ChatSection({ id }: { id: string }) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buf = "";
+        let fullContent = "";
 
-        // eslint-disable-next-line no-constant-condition
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-
           buf += decoder.decode(value, { stream: true });
           const lines = buf.split("\n");
           buf = lines.pop() ?? "";
-
           for (const line of lines) {
             if (!line.startsWith("data: ")) continue;
             const payload = line.slice(6);
             if (payload === "[DONE]") break;
-
             try {
               const parsed: unknown = JSON.parse(payload);
-              // Server sends json.Marshal(string) → a JSON string e.g. "hello"
-              // On error it sends {"error":"..."} → surface as a warning line
               let chunk: string;
-              if (typeof parsed === "string") {
-                chunk = parsed;
-              } else if (parsed && typeof parsed === "object" && "error" in parsed) {
+              if (typeof parsed === "string") chunk = parsed;
+              else if (parsed && typeof parsed === "object" && "error" in parsed)
                 chunk = `⚠ ${(parsed as { error: string }).error}`;
-              } else {
-                continue;
-              }
-              setMessages((prev) => {
+              else continue;
+              fullContent += chunk;
+              setMsgs((prev) => {
                 const copy = [...prev];
                 const last = copy[copy.length - 1];
-                if (last?.streaming) {
+                if (last?.streaming)
                   copy[copy.length - 1] = { ...last, content: last.content + chunk };
-                }
                 return copy;
               });
-            } catch {
-              // ignore unparseable lines
-            }
+            } catch { /* ignore */ }
           }
         }
+
+        if (currentMode === "improve") extractProposedPrompt(fullContent);
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
-          setMessages((prev) => {
+          setMsgs((prev) => {
             const copy = [...prev];
             const last = copy[copy.length - 1];
-            if (last?.streaming) {
+            if (last?.streaming)
               copy[copy.length - 1] = {
                 ...last,
                 content: last.content || "Error: " + (err as Error).message,
                 streaming: false,
               };
-            }
             return copy;
           });
         }
       } finally {
-        setMessages((prev) =>
-          prev.map((m) => (m.streaming ? { ...m, streaming: false } : m))
-        );
+        setMsgs((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)));
         setIsStreaming(false);
         abortRef.current = null;
       }
     },
-    [id, messages, isStreaming]
+    [id, mode, messages, improveMessages, isStreaming, currentPrompt, cycles, extractProposedPrompt]
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -578,55 +672,121 @@ function ChatSection({ id }: { id: string }) {
     }
   };
 
+  const handleApplyProposed = () => {
+    if (!proposedPrompt) return;
+    withAuth(() =>
+      updatePrompt.mutate(
+        { id, prompt: proposedPrompt, note: "AI improvement" },
+        { onSuccess: () => setProposedPrompt(null) }
+      )
+    );
+  };
+
+  const clearHistory = () => {
+    if (mode === "chat") setMessages([]);
+    else { setImproveMessages([]); setProposedPrompt(null); }
+  };
+
   return (
     <>
-      {/* Fixed bottom bar — sits to the right of the w-64 sidebar */}
       <div
         ref={panelRef}
         className="fixed bottom-0 left-64 right-0 z-40 bg-gray-950 border-t border-gray-800 shadow-2xl"
       >
-        {/* Expanded area: conversation history (only when open) */}
         {open && (
           <div className="border-b border-gray-800">
             {/* Header */}
             <div className="max-w-7xl mx-auto px-6 py-2.5 flex items-center justify-between">
-              <span className="text-sm font-semibold text-white">Ask AI</span>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="text-gray-500 hover:text-gray-300 text-xl leading-none transition-colors"
-                aria-label="Close chat"
-              >
-                ×
-              </button>
-            </div>
-
-            {/* Messages or quick-prompt chips */}
-            <div className="max-w-7xl mx-auto px-6 pb-4 max-h-[50vh] overflow-y-auto">
-              {messages.length === 0 ? (
-                <div className="flex flex-wrap gap-2">
-                  {QUICK_PROMPTS.map((q) => (
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-semibold text-white">Ask AI</span>
+                {/* Mode toggle */}
+                <div className="flex rounded-lg bg-gray-800 p-0.5 text-xs">
+                  <button
+                    onClick={() => { setMode("chat"); setProposedPrompt(null); }}
+                    className={cn(
+                      "px-2.5 py-1 rounded-md transition-colors",
+                      mode === "chat" ? "bg-gray-600 text-white" : "text-gray-400 hover:text-gray-200"
+                    )}
+                  >
+                    Chat
+                  </button>
+                  {currentPrompt && (
                     <button
-                      key={q}
-                      type="button"
-                      onClick={() => send(q)}
-                      disabled={isStreaming}
-                      className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-400 hover:border-blue-500 hover:text-blue-300 transition-colors disabled:opacity-40"
-                    >
-                      {q}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {messages.map((m, i) => (
-                    <div
-                      key={i}
+                      onClick={() => { setMode("improve"); setProposedPrompt(null); }}
                       className={cn(
-                        "flex",
-                        m.role === "user" ? "justify-end" : "justify-start"
+                        "px-2.5 py-1 rounded-md transition-colors",
+                        mode === "improve" ? "bg-blue-600 text-white" : "text-gray-400 hover:text-gray-200"
                       )}
                     >
+                      Improve Prompt
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                {activeMessages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearHistory}
+                    className="text-xs text-gray-600 hover:text-gray-400 transition-colors"
+                  >
+                    Clear
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="text-gray-500 hover:text-gray-300 text-xl leading-none transition-colors"
+                  aria-label="Close chat"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            {/* Proposed prompt diff — shown above messages when AI suggests an improvement */}
+            {proposedPrompt && currentPrompt && (
+              <div className="max-w-7xl mx-auto px-6 pb-2">
+                <PromptDiffBanner
+                  currentPrompt={currentPrompt}
+                  proposedPrompt={proposedPrompt}
+                  onApply={handleApplyProposed}
+                  applying={updatePrompt.isPending}
+                  onDismiss={() => setProposedPrompt(null)}
+                />
+              </div>
+            )}
+
+            {/* Messages */}
+            <div
+              ref={msgContainerRef}
+              className="max-w-7xl mx-auto px-6 pb-4 max-h-[50vh] overflow-y-auto"
+            >
+              {activeMessages.length === 0 ? (
+                mode === "chat" ? (
+                  <div className="flex flex-wrap gap-2">
+                    {QUICK_PROMPTS.map((q) => (
+                      <button
+                        key={q}
+                        type="button"
+                        onClick={() => send(q)}
+                        disabled={isStreaming}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-400 hover:border-blue-500 hover:text-blue-300 transition-colors disabled:opacity-40"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500 italic">
+                    Describe how to improve the prompt. The AI will reply with an updated version
+                    and a diff so you can review before applying.
+                  </p>
+                )
+              ) : (
+                <div className="space-y-3">
+                  {activeMessages.map((m, i) => (
+                    <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
                       <div
                         className={cn(
                           "max-w-[80%] rounded-xl px-4 py-2.5 text-sm whitespace-pre-wrap",
@@ -646,7 +806,6 @@ function ChatSection({ id }: { id: string }) {
                       </div>
                     </div>
                   ))}
-                  <div ref={bottomRef} />
                 </div>
               )}
             </div>
@@ -662,7 +821,11 @@ function ChatSection({ id }: { id: string }) {
             onFocus={() => setOpen(true)}
             onKeyDown={handleKeyDown}
             disabled={isStreaming}
-            placeholder="Ask AI about your strategy…  (Enter to send · Shift+Enter for newline)"
+            placeholder={
+              mode === "improve"
+                ? "Describe how to improve the prompt… (Enter to send)"
+                : "Ask AI about your strategy…  (Enter · Shift+Enter for newline)"
+            }
             rows={1}
             className="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-white text-sm outline-none focus:border-blue-500 resize-none disabled:opacity-50 placeholder-gray-600"
           />
@@ -687,9 +850,82 @@ function ChatSection({ id }: { id: string }) {
         </div>
       </div>
 
-      {/* Spacer keeps the last page section from being obscured by the fixed bar */}
+      {/* Spacer keeps the last section from being obscured by the fixed bar */}
       <div className="h-16" />
     </>
+  );
+}
+
+// ----- Prompt diff banner -----
+
+function PromptDiffBanner({
+  currentPrompt,
+  proposedPrompt,
+  onApply,
+  applying,
+  onDismiss,
+}: {
+  currentPrompt: string;
+  proposedPrompt: string;
+  onApply: () => void;
+  applying: boolean;
+  onDismiss: () => void;
+}) {
+  const [viewMode, setViewMode] = useState<"diff" | "full">("diff");
+  const changes = diffLines(currentPrompt, proposedPrompt);
+
+  return (
+    <div className="bg-green-900/20 border border-green-700/40 rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-green-700/30">
+        <span className="text-sm text-green-400 font-medium">
+          AI proposed an improved prompt
+        </span>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded bg-gray-800 p-0.5 text-xs">
+            <button
+              onClick={() => setViewMode("diff")}
+              className={cn(
+                "px-2 py-0.5 rounded transition-colors",
+                viewMode === "diff" ? "bg-gray-600 text-white" : "text-gray-400 hover:text-gray-200"
+              )}
+            >
+              Diff
+            </button>
+            <button
+              onClick={() => setViewMode("full")}
+              className={cn(
+                "px-2 py-0.5 rounded transition-colors",
+                viewMode === "full" ? "bg-gray-600 text-white" : "text-gray-400 hover:text-gray-200"
+              )}
+            >
+              Full
+            </button>
+          </div>
+          <button
+            onClick={onDismiss}
+            className="text-xs text-gray-500 hover:text-gray-300 px-2 py-1 transition-colors"
+          >
+            Dismiss
+          </button>
+          <button
+            onClick={onApply}
+            disabled={applying}
+            className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-500 disabled:opacity-40 transition-colors"
+          >
+            {applying ? "Applying…" : "Apply Prompt"}
+          </button>
+        </div>
+      </div>
+      <div className="max-h-52 overflow-y-auto text-xs font-mono">
+        {viewMode === "diff" ? (
+          <InlineDiff changes={changes} />
+        ) : (
+          <pre className="px-4 py-3 text-gray-300 whitespace-pre-wrap leading-5">
+            {proposedPrompt}
+          </pre>
+        )}
+      </div>
+    </div>
   );
 }
 
