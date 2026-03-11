@@ -2,7 +2,7 @@ name: Deploy
 
 on:
   push:
-    branches: [main]
+    tags: ['v*.*.*']  # only deploy on version tags created by release.yml
 
 env:
   IMAGE: ghcr.io/lukecold/smart-trader-website
@@ -31,7 +31,7 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:${{ github.ref_name }}
 
       - name: Deploy to VM
         uses: appleboy/ssh-action@v1
