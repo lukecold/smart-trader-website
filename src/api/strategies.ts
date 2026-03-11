@@ -182,6 +182,19 @@ export function usePromptHistory(id: string) {
   });
 }
 
+export function useClosePosition() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, symbol }: { id: string; symbol: string }) => {
+      await api.post(`/strategies/close-position?id=${id}&symbol=${encodeURIComponent(symbol)}`);
+    },
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: KEYS.holdings(id) });
+      qc.invalidateQueries({ queryKey: KEYS.portfolio(id) });
+    },
+  });
+}
+
 export function useUpdatePrompt() {
   const qc = useQueryClient();
   return useMutation({

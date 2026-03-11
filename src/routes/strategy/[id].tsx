@@ -6,6 +6,7 @@ import {
   usePortfolioSummary,
   useStrategyDetail,
   useEquityCurve,
+  useClosePosition,
 } from "@/api/strategies";
 import { formatCurrency, formatPct, formatNumber, cn } from "@/lib/utils";
 import { PromptSection } from "@/components/strategy/PromptSection";
@@ -202,7 +203,19 @@ function BacktestSectionWrapper({ id }: { id: string }) {
 
 function HoldingsSection({ id }: { id: string }) {
   const { data: holdings } = useStrategyHoldings(id);
+  const closeMutation = useClosePosition();
+  const [closingSymbol, setClosingSymbol] = useState<string | null>(null);
+
   if (!holdings || holdings.length === 0) return null;
+
+  const handleClose = (symbol: string) => {
+    if (!window.confirm(`Close ${symbol} position at market price?`)) return;
+    setClosingSymbol(symbol);
+    closeMutation.mutate(
+      { id, symbol },
+      { onSettled: () => setClosingSymbol(null) }
+    );
+  };
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
@@ -217,6 +230,7 @@ function HoldingsSection({ id }: { id: string }) {
               <th className="text-right py-2 font-medium">Entry Price</th>
               <th className="text-right py-2 font-medium">Leverage</th>
               <th className="text-right py-2 font-medium">Unrealized PnL</th>
+              <th className="text-right py-2 font-medium"></th>
             </tr>
           </thead>
           <tbody>
@@ -258,6 +272,15 @@ function HoldingsSection({ id }: { id: string }) {
                       ({formatPct(h.unrealizedPnlPct)})
                     </span>
                   )}
+                </td>
+                <td className="py-2.5 text-right">
+                  <button
+                    onClick={() => handleClose(h.symbol)}
+                    disabled={closingSymbol === h.symbol}
+                    className="text-xs px-2.5 py-1 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {closingSymbol === h.symbol ? "Closing…" : "Close"}
+                  </button>
                 </td>
               </tr>
             ))}
