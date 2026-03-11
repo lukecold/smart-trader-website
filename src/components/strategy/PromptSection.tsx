@@ -33,7 +33,7 @@ export function PromptSection({ id, currentPrompt }: Props) {
   const [isImproving, setIsImproving] = useState(false);
   const [proposedPrompt, setProposedPrompt] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const chatBottomRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
   // History / diff state
   const [selectedVersions, setSelectedVersions] = useState<number[]>([]);
@@ -43,10 +43,15 @@ export function PromptSection({ id, currentPrompt }: Props) {
   const updatePrompt = useUpdatePrompt();
   const { withAuth } = useAuthGuard();
 
-  // Scroll chat to bottom when messages change
+  // Scroll the chat container (not the page) to the bottom — but only when
+  // the user is already near the bottom, so manual scroll-up isn't hijacked.
   useEffect(() => {
-    if (mode === "improve") {
-      chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (mode !== "improve") return;
+    const el = chatContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom < 80) {
+      el.scrollTop = el.scrollHeight;
     }
   }, [improveMessages, mode]);
 
@@ -346,7 +351,7 @@ export function PromptSection({ id, currentPrompt }: Props) {
           )}
 
           {/* Chat messages */}
-          <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
+          <div ref={chatContainerRef} className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
             {improveMessages.length === 0 && (
               <p className="text-sm text-gray-500 italic">
                 Describe how you'd like to improve the prompt. The AI will
@@ -395,7 +400,6 @@ export function PromptSection({ id, currentPrompt }: Props) {
                 </div>
               </div>
             ))}
-            <div ref={chatBottomRef} />
           </div>
 
           {/* Input */}
