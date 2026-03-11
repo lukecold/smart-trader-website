@@ -20,6 +20,7 @@ interface Props {
 }
 
 export function PromptSection({ id, currentPrompt }: Props) {
+  const [collapsed, setCollapsed] = useState(true);
   const [mode, setMode] = useState<Mode>("view");
 
   // Edit state
@@ -241,42 +242,52 @@ export function PromptSection({ id, currentPrompt }: Props) {
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-white">Strategy Prompt</h3>
-        <div className="flex gap-2">
-          {mode !== "edit" && (
-            <TabBtn
-              active={mode === "view"}
-              onClick={() => setMode("view")}
-            >
-              View
-            </TabBtn>
-          )}
-          <TabBtn
-            active={mode === "edit"}
-            onClick={handleOpenEdit}
-          >
-            Edit
-          </TabBtn>
-          <TabBtn
-            active={mode === "improve"}
-            onClick={() => setMode("improve")}
-          >
-            Improve with AI
-          </TabBtn>
-          <TabBtn
-            active={mode === "history"}
-            onClick={() => setMode("history")}
-          >
-            History
-            {versions && versions.length > 0 && (
-              <span className="ml-1.5 text-xs bg-gray-700 text-gray-400 rounded-full px-1.5 py-0.5">
-                {versions.length}
-              </span>
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => setCollapsed((c) => !c)}
+          className="flex items-center gap-2 text-left"
+        >
+          <span className="text-lg font-semibold text-white">Strategy Prompt</span>
+          <svg
+            className={cn(
+              "w-4 h-4 text-gray-500 transition-transform duration-200",
+              collapsed ? "" : "rotate-180"
             )}
-          </TabBtn>
-        </div>
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {!collapsed && (
+          <div className="flex gap-2">
+            {mode !== "edit" && (
+              <TabBtn active={mode === "view"} onClick={() => setMode("view")}>
+                View
+              </TabBtn>
+            )}
+            <TabBtn active={mode === "edit"} onClick={handleOpenEdit}>
+              Edit
+            </TabBtn>
+            <TabBtn active={mode === "improve"} onClick={() => setMode("improve")}>
+              Improve with AI
+            </TabBtn>
+            <TabBtn active={mode === "history"} onClick={() => setMode("history")}>
+              History
+              {versions && versions.length > 0 && (
+                <span className="ml-1.5 text-xs bg-gray-700 text-gray-400 rounded-full px-1.5 py-0.5">
+                  {versions.length}
+                </span>
+              )}
+            </TabBtn>
+          </div>
+        )}
       </div>
+
+      {!collapsed && (
+      <div className="mt-4">
 
       {/* ── View ── */}
       {mode === "view" && (
@@ -512,6 +523,8 @@ export function PromptSection({ id, currentPrompt }: Props) {
             </div>
           )}
         </div>
+      )}
+      </div>
       )}
     </div>
   );

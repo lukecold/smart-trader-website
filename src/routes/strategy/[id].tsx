@@ -82,6 +82,12 @@ function EquityCurveSection({ id }: { id: string }) {
     value: p.totalValue,
   }));
 
+  const values = formatted.map((p) => p.value);
+  const minVal = Math.min(...values);
+  const maxVal = Math.max(...values);
+  const pad = (maxVal - minVal) * 0.05 || maxVal * 0.01; // 5% of range, or 1% of value if flat
+  const yDomain: [number, number] = [minVal - pad, maxVal + pad];
+
   const first = formatted[0].value;
   const last = formatted[formatted.length - 1].value;
   const isUp = last >= first;
@@ -125,6 +131,7 @@ function EquityCurveSection({ id }: { id: string }) {
               interval="preserveStartEnd"
             />
             <YAxis
+              domain={yDomain}
               tick={{ fill: "#6b7280", fontSize: 11 }}
               tickLine={false}
               axisLine={false}
