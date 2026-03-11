@@ -7,6 +7,7 @@ import {
   useStrategyDetail,
   useEquityCurve,
   useClosePosition,
+  usePruneSnapshots,
 } from "@/api/strategies";
 import { formatCurrency, formatPct, formatNumber, cn } from "@/lib/utils";
 import { PromptSection } from "@/components/strategy/PromptSection";
@@ -30,9 +31,8 @@ export function StrategyDetail() {
       <Link to="/" className="text-sm text-gray-500 hover:text-gray-300">
         &larr; Back to Dashboard
       </Link>
-      <PerformanceSection id={id} />
+      <OverviewSection id={id} />
       <EquityCurveSection id={id} />
-      <PortfolioSection id={id} />
       <HoldingsSection id={id} />
       <PromptSectionWrapper id={id} />
       <BacktestSectionWrapper id={id} />
@@ -46,6 +46,30 @@ export function StrategyDetail() {
 
 function EquityCurveSection({ id }: { id: string }) {
   const { data: points } = useEquityCurve(id);
+  const pruneMutation = usePruneSnapshots();
+  const [pruning, setPruning] = useState(false);
+
+  const handlePrune = async () => {
+    const input = window.prompt(
+      "Remove datapoints below this portfolio value (e.g. 2900):"
+    );
+    if (!input) return;
+    const minValue = parseFloat(input);
+    if (isNaN(minValue) || minValue <= 0) {
+      alert("Please enter a valid positive number.");
+      return;
+    }
+    setPruning(true);
+    try {
+      const result = await pruneMutation.mutateAsync({ id, minValue });
+      alert(`Removed ${(result as { deleted?: number })?.deleted ?? 0} snapshot(s).`);
+    } catch {
+      alert("Failed to prune snapshots.");
+    } finally {
+      setPruning(false);
+    }
+  };
+
   if (!points || points.length < 2) return null;
 
   const formatted = points.map((p) => ({
@@ -64,7 +88,17 @@ function EquityCurveSection({ id }: { id: string }) {
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-      <h3 className="text-lg font-semibold text-white mb-4">Equity Curve</h3>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-white">Equity Curve</h3>
+        <button
+          onClick={handlePrune}
+          disabled={pruning}
+          className="text-xs px-2.5 py-1 rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200 disabled:opacity-40 transition-colors"
+          title="Remove outlier datapoints below a threshold"
+        >
+          {pruning ? "Pruning…" : "Remove Outliers"}
+        </button>
+      </div>
       <div className="h-56">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={formatted} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
@@ -122,67 +156,70 @@ function EquityCurveSection({ id }: { id: string }) {
   );
 }
 
-// ----- Performance -----
+// ----- Overview (Performance + Portfolio merged) -----
 
-function PerformanceSection({ id }: { id: string }) {
-  const { data } = useStrategyPerformance(id);
-  if (!data) return null;
+function OverviewSection({ id }: { id: string }) {
+  const { data: perf } = useStrategyPerformance(id);
+  const { data: port } = usePortfolioSummary(id);
+  if (!perf) return null;
 
-  return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-      <h3 className="text-lg font-semibold text-white mb-4">Performance</h3>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Stat label="Strategy" value={data.strategyType || "-"} />
-        <Stat label="Initial Capital" value={formatCurrency(data.initialCapital)} />
-        <Stat
-          label="ROI"
-          value={formatPct(data.returnRatePct)}
-          color={
-            data.returnRatePct != null
-              ? data.returnRatePct >= 0
-                ? "text-green-400"
-                : "text-red-400"
-              : undefined
-          }
-        />
-        <Stat label="Exchange" value={data.exchangeId || "-"} />
-        <Stat label="Provider" value={data.llmProvider || "-"} />
-        <Stat label="Model" value={data.llmModelId || "-"} />
-        <Stat label="Mode" value={data.tradingMode || "-"} />
-        <Stat label="Max Leverage" value={data.maxLeverage ? `${data.maxLeverage}x` : "-"} />
-      </div>
-      {data.symbols && data.symbols.length > 0 && (
-        <div className="mt-4">
-          <span className="text-sm text-gray-500">Symbols: </span>
-          <span className="text-sm text-gray-300">{data.symbols.join(", ")}</span>
-        </div>
-      )}
-    </div>
-  );
-}
+  const roiColor =
+    perf.returnRatePct != null
+      ? perf.returnRatePct >= 0
+        ? "text-green-400"
+        : "text-red-400"
+      : undefined;
 
-// ----- Portfolio -----
-
-function PortfolioSection({ id }: { id: string }) {
-  const { data } = usePortfolioSummary(id);
-  if (!data) return null;
-
-  const pnlColor =
-    data.totalPnl != null
-      ? data.totalPnl >= 0
+  const uPnlColor =
+    port?.unrealizedPnl != null
+      ? port.unrealizedPnl >= 0
         ? "text-green-400"
         : "text-red-400"
       : undefined;
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-      <h3 className="text-lg font-semibold text-white mb-4">Portfolio</h3>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Stat label="Total Value" value={formatCurrency(data.totalValue)} />
-        <Stat label="Available Cash" value={formatCurrency(data.cash)} />
-        <Stat label="Total PnL" value={formatCurrency(data.totalPnl)} color={pnlColor} />
-        <Stat label="PnL %" value={formatPct(data.totalPnlPct)} color={pnlColor} />
+      <h3 className="text-lg font-semibold text-white mb-4">Overview</h3>
+
+      {/* Config row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+        <Stat label="Strategy" value={perf.strategyType || "-"} />
+        <Stat label="Initial Capital" value={formatCurrency(perf.initialCapital)} />
+        <Stat label="ROI" value={formatPct(perf.returnRatePct)} color={roiColor} />
+        <Stat label="Exchange" value={perf.exchangeId || "-"} />
+        <Stat label="Provider" value={perf.llmProvider || "-"} />
+        <Stat label="Model" value={perf.llmModelId || "-"} />
+        <Stat label="Mode" value={perf.tradingMode || "-"} />
+        <Stat label="Max Leverage" value={perf.maxLeverage ? `${perf.maxLeverage}x` : "-"} />
       </div>
+
+      {perf.symbols && perf.symbols.length > 0 && (
+        <div className="mb-4">
+          <span className="text-sm text-gray-500">Symbols: </span>
+          <span className="text-sm text-gray-300">{perf.symbols.join(", ")}</span>
+        </div>
+      )}
+
+      {/* Live portfolio row — only shown when data is available */}
+      {port && (
+        <>
+          <div className="border-t border-gray-800 my-3" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Stat label="Total Value" value={formatCurrency(port.totalValue)} />
+            <Stat label="Available Cash" value={formatCurrency(port.cash)} />
+            <Stat
+              label="Unrealized PnL"
+              value={formatCurrency(port.unrealizedPnl)}
+              color={uPnlColor}
+            />
+            <Stat
+              label="Unrealized PnL %"
+              value={formatPct(port.unrealizedPnlPct)}
+              color={uPnlColor}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -350,10 +387,16 @@ function TradeHistorySection({ id }: { id: string }) {
                       {a.realizedPnl != null && a.realizedPnl !== 0 && (
                         <span
                           className={cn(
+                            "font-medium",
                             a.realizedPnl >= 0 ? "text-green-400" : "text-red-400"
                           )}
                         >
                           {formatCurrency(a.realizedPnl)}
+                          {a.realizedPnlPct != null && (
+                            <span className="text-xs ml-1 opacity-75">
+                              ({formatPct(a.realizedPnlPct)})
+                            </span>
+                          )}
                         </span>
                       )}
                     </div>

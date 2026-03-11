@@ -195,6 +195,23 @@ export function useClosePosition() {
   });
 }
 
+export function usePruneSnapshots() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, minValue }: { id: string; minValue: number }) => {
+      const res = await api.delete<{ deleted: number }>(
+        `/strategies/snapshots?id=${id}&min_value=${minValue}`
+      );
+      return res.data;
+    },
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["strategy", id, "equity"] });
+      qc.invalidateQueries({ queryKey: KEYS.portfolio(id) });
+      qc.invalidateQueries({ queryKey: KEYS.performance(id) });
+    },
+  });
+}
+
 export function useUpdatePrompt() {
   const qc = useQueryClient();
   return useMutation({

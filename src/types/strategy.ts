@@ -36,6 +36,9 @@ export interface PortfolioSummary {
   totalValue: number | null;
   totalPnl: number | null;
   totalPnlPct: number | null;
+  unrealizedPnl: number | null;
+  unrealizedPnlPct: number | null;
+  realizedPnl: number | null;
   grossExposure: number | null;
   netExposure: number | null;
 }
