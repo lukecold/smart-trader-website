@@ -1,23 +1,59 @@
-name: Deploy
+name: Release & Deploy
 
 on:
   push:
-    tags: ['v*.*.*']  # only deploy on version tags created by release.yml
+    branches: [main]
 
 env:
   IMAGE: ghcr.io/lukecold/smart-trader-website
 
 jobs:
-  deploy:
+  release-and-deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
+      contents: write   # push version tag
+      packages: write   # push to GHCR
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
+      # ── 1. Compute next version ────────────────────────────────────────────
+      - name: Compute next version
+        id: version
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%s)
+          echo "commit: $COMMIT_MSG"
+
+          LATEST_TAG=$(git tag --list 'v*.*.*' --sort=-version:refname | head -1)
+          LATEST_TAG=${LATEST_TAG:-v0.0.0}
+          echo "latest tag: $LATEST_TAG"
+
+          MAJOR=$(echo "${LATEST_TAG#v}" | cut -d. -f1)
+          MINOR=$(echo "${LATEST_TAG#v}" | cut -d. -f2)
+          PATCH=$(echo "${LATEST_TAG#v}" | cut -d. -f3)
+
+          if echo "$COMMIT_MSG" | grep -qE '^[a-zA-Z]+(\(.+\))?!:'; then
+            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0; BUMP=major
+          elif echo "$COMMIT_MSG" | grep -qE '^feat(\(.+\))?:'; then
+            MINOR=$((MINOR + 1)); PATCH=0; BUMP=minor
+          elif echo "$COMMIT_MSG" | grep -qE '^(fix|refactor|chore)(\(.+\))?:'; then
+            PATCH=$((PATCH + 1)); BUMP=patch
+          else
+            echo "bump=none" >> "$GITHUB_OUTPUT"
+            echo "No version bump — skipping build and deploy."
+            exit 0
+          fi
+
+          NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "bump=$BUMP"    >> "$GITHUB_OUTPUT"
+          echo "tag=$NEW_TAG"  >> "$GITHUB_OUTPUT"
+          echo "new tag: $NEW_TAG ($BUMP)"
+
+      # ── 2. Build & push Docker image ──────────────────────────────────────
       - name: Log in to GHCR
+        if: steps.version.outputs.bump != 'none'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -25,15 +61,18 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
+        if: steps.version.outputs.bump != 'none'
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
             ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}:${{ steps.version.outputs.tag }}
 
+      # ── 3. Deploy to VM ───────────────────────────────────────────────────
       - name: Deploy to VM
+        if: steps.version.outputs.bump != 'none'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VM_HOST }}
@@ -45,3 +84,13 @@ jobs:
             docker compose pull website
             docker compose up -d website
             docker image prune -f
+
+      # ── 4. Tag the commit (after successful deploy) ───────────────────────
+      - name: Create version tag
+        if: steps.version.outputs.bump != 'none'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.version.outputs.tag }}" \
+               -m "Release ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"

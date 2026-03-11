@@ -371,6 +371,7 @@ function TradeHistorySection({ id }: { id: string }) {
                     key={a.instructionId}
                     className="flex items-center justify-between text-sm py-1"
                   >
+                    {/* Left: action badge + symbol + qty */}
                     <div className="flex items-center gap-2">
                       <span
                         className={cn(
@@ -380,22 +381,34 @@ function TradeHistorySection({ id }: { id: string }) {
                             : "bg-orange-500/10 text-orange-400"
                         )}
                       >
-                        {a.action.replace("_", " ").toUpperCase()}
+                        {a.action.replace(/_/g, " ").toUpperCase()}
                       </span>
                       <span className="text-white">{a.symbol}</span>
-                      {a.quantity && (
+                      {a.quantity != null && (
                         <span className="text-gray-500">
                           qty={formatNumber(a.quantity)}
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-4">
-                      {a.avgExecPrice && (
-                        <span className="text-gray-400">
-                          @{formatNumber(a.avgExecPrice, 2)}
+                    {/* Right: price info + P&L */}
+                    <div className="flex items-center gap-3 text-xs">
+                      {/* For close actions show entry→exit, for opens just exec price */}
+                      {a.action.includes("close") ? (
+                        <span className="text-gray-500">
+                          {a.entryPrice != null && (
+                            <span>entry <span className="text-gray-400">@{formatNumber(a.entryPrice, 2)}</span> → </span>
+                          )}
+                          {a.avgExecPrice != null && (
+                            <span>exit <span className="text-gray-400">@{formatNumber(a.avgExecPrice, 2)}</span></span>
+                          )}
                         </span>
+                      ) : (
+                        a.avgExecPrice != null && (
+                          <span className="text-gray-400">@{formatNumber(a.avgExecPrice, 2)}</span>
+                        )
                       )}
-                      {a.realizedPnl != null && a.realizedPnl !== 0 && (
+                      {/* P&L — show on all close actions (even 0) */}
+                      {a.action.includes("close") && a.realizedPnl != null && (
                         <span
                           className={cn(
                             "font-medium",
@@ -404,7 +417,7 @@ function TradeHistorySection({ id }: { id: string }) {
                         >
                           {formatCurrency(a.realizedPnl)}
                           {a.realizedPnlPct != null && (
-                            <span className="text-xs ml-1 opacity-75">
+                            <span className="opacity-75 ml-1">
                               ({formatPct(a.realizedPnlPct)})
                             </span>
                           )}
@@ -776,40 +789,66 @@ function ChatSection({ id }: { id: string }) {
                 )
               ) : (
                 <div className="space-y-3">
-                  {activeMessages.map((m, i) => (
-                    <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-                      <div
-                        className={cn(
-                          "max-w-[80%] rounded-xl px-4 py-2.5 text-sm whitespace-pre-wrap",
-                          m.role === "user"
-                            ? "bg-blue-600 text-white"
-                            : "bg-gray-800 text-gray-200 border border-gray-700"
-                        )}
-                      >
-                        {m.content}
-                        {m.streaming && (
-                          <span className="inline-flex gap-0.5 ml-1">
-                            <span className="animate-bounce" style={{ animationDelay: "0ms" }}>·</span>
-                            <span className="animate-bounce" style={{ animationDelay: "150ms" }}>·</span>
-                            <span className="animate-bounce" style={{ animationDelay: "300ms" }}>·</span>
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                  {activeMessages.map((m, i) => {
+                    // In improve mode, embed the diff banner inside the last assistant bubble
+                    // once streaming is complete and we have a proposed prompt.
+                    const embedDiff =
+                      mode === "improve" &&
+                      proposedPrompt &&
+                      !isStreaming &&
+                      m.role === "assistant" &&
+                      i === activeMessages.length - 1;
 
-              {/* Diff banner — rendered inline below messages, only in improve mode */}
-              {mode === "improve" && proposedPrompt && !isStreaming && (
-                <div className="mt-3">
-                  <PromptDiffBanner
-                    currentPrompt={currentPrompt ?? ""}
-                    proposedPrompt={proposedPrompt}
-                    onApply={handleApplyProposed}
-                    applying={updatePrompt.isPending}
-                    onDismiss={() => setProposedPrompt(null)}
-                  />
+                    // Strip the raw ```strategy...``` block from the displayed text —
+                    // we'll show the diff banner instead of the raw code fence.
+                    const displayText = embedDiff
+                      ? m.content
+                          .replace(/```strategy[\s\S]*?```/gi, "")
+                          .replace(/```prompt[\s\S]*?```/gi, "")
+                          .trim()
+                      : m.content;
+
+                    return (
+                      <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
+                        <div
+                          className={cn(
+                            "rounded-xl px-4 py-2.5 text-sm",
+                            embedDiff ? "w-full" : "max-w-[80%] whitespace-pre-wrap",
+                            m.role === "user"
+                              ? "bg-blue-600 text-white"
+                              : "bg-gray-800 text-gray-200 border border-gray-700"
+                          )}
+                        >
+                          {embedDiff ? (
+                            <>
+                              {/* Explanation text (bullets from step 2), above the diff */}
+                              {displayText && (
+                                <p className="whitespace-pre-wrap mb-3">{displayText}</p>
+                              )}
+                              <PromptDiffBanner
+                                currentPrompt={currentPrompt ?? ""}
+                                proposedPrompt={proposedPrompt}
+                                onApply={handleApplyProposed}
+                                applying={updatePrompt.isPending}
+                                onDismiss={() => setProposedPrompt(null)}
+                              />
+                            </>
+                          ) : (
+                            <>
+                              {displayText}
+                              {m.streaming && (
+                                <span className="inline-flex gap-0.5 ml-1">
+                                  <span className="animate-bounce" style={{ animationDelay: "0ms" }}>·</span>
+                                  <span className="animate-bounce" style={{ animationDelay: "150ms" }}>·</span>
+                                  <span className="animate-bounce" style={{ animationDelay: "300ms" }}>·</span>
+                                </span>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
