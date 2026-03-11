@@ -518,12 +518,21 @@ function ChatSection({ id }: { id: string }) {
   const [isStreaming, setIsStreaming] = useState(false);
   // Lazily initialised from localStorage so the diff banner survives page
   // refreshes and collapse / expand cycles without extra effects.
+  // Only restores the diff banner when the last message has BOTH a code block
+  // AND non-empty explanation text — guards against code-block-only messages
+  // that would produce an empty bubble.
   const [proposedPrompt, setProposedPrompt] = useState<string | null>(() => {
     const msgs = loadMsgs(chatKey);
     if (!msgs.length) return null;
     const last = msgs[msgs.length - 1];
     if (last.role !== "assistant" || !last.content) return null;
-    return extractPromptFromText(last.content);
+    const extracted = extractPromptFromText(last.content);
+    if (!extracted) return null;
+    const nonCodeText = last.content
+      .replace(/```strategy[\s\S]*?```/gi, "")
+      .replace(/```prompt[\s\S]*?```/gi, "")
+      .trim();
+    return nonCodeText ? extracted : null;
   });
 
   const panelRef = useRef<HTMLDivElement>(null);
@@ -572,7 +581,15 @@ function ChatSection({ id }: { id: string }) {
 
   const extractProposedPrompt = useCallback((text: string) => {
     const extracted = extractPromptFromText(text);
-    if (extracted) setProposedPrompt(extracted);
+    if (!extracted) return;
+    // Only show the diff banner when the response also contains explanation text.
+    // If the entire response is just the code block (no preamble), the AI was
+    // "primed" by history context — display it as raw text to avoid an empty bubble.
+    const nonCodeText = text
+      .replace(/```strategy[\s\S]*?```/gi, "")
+      .replace(/```prompt[\s\S]*?```/gi, "")
+      .trim();
+    if (nonCodeText) setProposedPrompt(extracted);
   }, []);
 
   const send = useCallback(
@@ -591,9 +608,22 @@ function ChatSection({ id }: { id: string }) {
         messageWithCtx = `${trimmed}\n\n[Cycle context]\n${ctx}`;
       }
 
+      // Strip strategy code blocks from assistant messages in history.
+      // This prevents the AI from being "primed" to respond with code blocks
+      // in subsequent turns, and reduces context token usage significantly
+      // (improved prompts can be 500–1000 tokens each).
       const history = messages
         .filter((m) => !m.streaming)
-        .map((m) => ({ role: m.role, content: m.content }));
+        .map((m) => ({
+          role: m.role,
+          content:
+            m.role === "assistant"
+              ? m.content
+                  .replace(/```strategy[\s\S]*?```/gi, "[strategy code block omitted]")
+                  .replace(/```prompt[\s\S]*?```/gi, "[strategy code block omitted]")
+                  .trim()
+              : m.content,
+        }));
 
       setMessages((prev) => [
         ...prev,
@@ -754,22 +784,32 @@ function ChatSection({ id }: { id: string }) {
               ) : (
                 <div className="space-y-3">
                   {messages.map((m, i) => {
-                    // Embed the diff banner inside the last assistant bubble
-                    // once streaming is complete and we have a proposed prompt.
+                    // Pre-compute stripped text once so we can use it in both
+                    // the embedDiff guard and the displayText calculation.
+                    const strippedContent = m.content
+                      .replace(/```strategy[\s\S]*?```/gi, "")
+                      .replace(/```prompt[\s\S]*?```/gi, "")
+                      .trim();
+                    // Only embed the diff banner when:
+                    //  1. proposedPrompt is set (there is a proposed prompt to show)
+                    //  2. Streaming is complete
+                    //  3. This is the last assistant message
+                    //  4. The message actually contains a strategy/prompt code block
+                    //  5. There is non-empty explanation text alongside the code block
+                    //     (guards against code-block-only messages → empty bubble)
+                    const hasStrategyBlock =
+                      m.role === "assistant" &&
+                      /```(strategy|prompt)/i.test(m.content);
                     const embedDiff =
                       !!proposedPrompt &&
                       !isStreaming &&
-                      m.role === "assistant" &&
+                      hasStrategyBlock &&
+                      !!strippedContent &&
                       i === messages.length - 1;
 
                     // Strip the raw ```strategy...``` block from the displayed text —
                     // we'll show the diff banner instead of the raw code fence.
-                    const displayText = embedDiff
-                      ? m.content
-                          .replace(/```strategy[\s\S]*?```/gi, "")
-                          .replace(/```prompt[\s\S]*?```/gi, "")
-                          .trim()
-                      : m.content;
+                    const displayText = embedDiff ? strippedContent : m.content;
 
                     return (
                       <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
