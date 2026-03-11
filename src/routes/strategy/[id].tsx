@@ -544,11 +544,12 @@ function ChatSection({ id }: { id: string }) {
   }, [open]);
 
   const extractProposedPrompt = useCallback((text: string) => {
-    // Match ```strategy (case-insensitive, any trailing text on same line, then newline)
-    // e.g. ```strategy, ```strategy (improved), ```Strategy, etc.
+    // 1. Properly closed block (ideal case after max_tokens fix)
     let m = text.match(/```strategy[^\n]*\n([\s\S]*?)```/i);
-    // Fallback: try ```prompt or just the longest bare ``` block in the response
     if (!m) m = text.match(/```prompt[^\n]*\n([\s\S]*?)```/i);
+    // 2. Truncated response — no closing ```, grab everything after the opening tag
+    if (!m) m = text.match(/```strategy[^\n]*\n([\s\S]+)$/i);
+    if (!m) m = text.match(/```prompt[^\n]*\n([\s\S]+)$/i);
     if (m) setProposedPrompt(m[1].trim());
   }, []);
 
@@ -748,10 +749,10 @@ function ChatSection({ id }: { id: string }) {
             </div>
 
             {/* Proposed prompt diff — shown above messages when AI suggests an improvement */}
-            {proposedPrompt && currentPrompt && (
+            {proposedPrompt && (
               <div className="max-w-7xl mx-auto px-6 pb-2">
                 <PromptDiffBanner
-                  currentPrompt={currentPrompt}
+                  currentPrompt={currentPrompt ?? ""}
                   proposedPrompt={proposedPrompt}
                   onApply={handleApplyProposed}
                   applying={updatePrompt.isPending}
@@ -898,7 +899,8 @@ function PromptDiffBanner({
   applying: boolean;
   onDismiss: () => void;
 }) {
-  const [viewMode, setViewMode] = useState<DiffViewMode>("inline");
+  // Default to "full" when there's no current prompt to diff against
+  const [viewMode, setViewMode] = useState<DiffViewMode>(currentPrompt ? "inline" : "full");
   const changes = diffLines(currentPrompt, proposedPrompt);
 
   return (
