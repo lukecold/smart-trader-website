@@ -11,7 +11,7 @@ import {
   useUpdatePrompt,
 } from "@/api/strategies";
 import { formatCurrency, formatPct, formatNumber, cn } from "@/lib/utils";
-import { PromptSection, InlineDiff } from "@/components/strategy/PromptSection";
+import { PromptSection, InlineDiff, SplitDiff } from "@/components/strategy/PromptSection";
 import { BacktestSection } from "@/components/strategy/BacktestSection";
 import { diffLines } from "diff";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
@@ -544,8 +544,11 @@ function ChatSection({ id }: { id: string }) {
   }, [open]);
 
   const extractProposedPrompt = useCallback((text: string) => {
-    // Accept ```strategy (with optional whitespace/newline after the tag)
-    const m = text.match(/```strategy[\s\r\n]+([\s\S]*?)```/);
+    // Match ```strategy (case-insensitive, any trailing text on same line, then newline)
+    // e.g. ```strategy, ```strategy (improved), ```Strategy, etc.
+    let m = text.match(/```strategy[^\n]*\n([\s\S]*?)```/i);
+    // Fallback: try ```prompt or just the longest bare ``` block in the response
+    if (!m) m = text.match(/```prompt[^\n]*\n([\s\S]*?)```/i);
     if (m) setProposedPrompt(m[1].trim());
   }, []);
 
@@ -858,6 +861,30 @@ function ChatSection({ id }: { id: string }) {
 
 // ----- Prompt diff banner -----
 
+type DiffViewMode = "inline" | "split" | "full";
+
+function ViewBtn({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "px-2.5 py-1 rounded text-xs transition-colors",
+        active ? "bg-gray-600 text-white" : "text-gray-400 hover:text-gray-200"
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 function PromptDiffBanner({
   currentPrompt,
   proposedPrompt,
@@ -871,35 +898,28 @@ function PromptDiffBanner({
   applying: boolean;
   onDismiss: () => void;
 }) {
-  const [viewMode, setViewMode] = useState<"diff" | "full">("diff");
+  const [viewMode, setViewMode] = useState<DiffViewMode>("inline");
   const changes = diffLines(currentPrompt, proposedPrompt);
 
   return (
     <div className="bg-green-900/20 border border-green-700/40 rounded-lg overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-green-700/30">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-green-700/30 flex-wrap gap-2">
         <span className="text-sm text-green-400 font-medium">
-          AI proposed an improved prompt
+          ✦ AI proposed an improved prompt
         </span>
-        <div className="flex items-center gap-2">
-          <div className="flex rounded bg-gray-800 p-0.5 text-xs">
-            <button
-              onClick={() => setViewMode("diff")}
-              className={cn(
-                "px-2 py-0.5 rounded transition-colors",
-                viewMode === "diff" ? "bg-gray-600 text-white" : "text-gray-400 hover:text-gray-200"
-              )}
-            >
-              Diff
-            </button>
-            <button
-              onClick={() => setViewMode("full")}
-              className={cn(
-                "px-2 py-0.5 rounded transition-colors",
-                viewMode === "full" ? "bg-gray-600 text-white" : "text-gray-400 hover:text-gray-200"
-              )}
-            >
-              Full
-            </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* View mode toggle */}
+          <div className="flex rounded bg-gray-800/80 p-0.5 gap-0.5">
+            <ViewBtn active={viewMode === "inline"} onClick={() => setViewMode("inline")}>
+              Inline diff
+            </ViewBtn>
+            <ViewBtn active={viewMode === "split"} onClick={() => setViewMode("split")}>
+              Side by side
+            </ViewBtn>
+            <ViewBtn active={viewMode === "full"} onClick={() => setViewMode("full")}>
+              Updated only
+            </ViewBtn>
           </div>
           <button
             onClick={onDismiss}
@@ -916,15 +936,29 @@ function PromptDiffBanner({
           </button>
         </div>
       </div>
-      <div className="max-h-52 overflow-y-auto text-xs font-mono">
-        {viewMode === "diff" ? (
-          <InlineDiff changes={changes} />
-        ) : (
-          <pre className="px-4 py-3 text-gray-300 whitespace-pre-wrap leading-5">
+
+      {/* Diff/full body */}
+      <div className="max-h-72 overflow-y-auto text-xs font-mono">
+        {viewMode === "inline" && <InlineDiff changes={changes} />}
+        {viewMode === "split" && <SplitDiff changes={changes} />}
+        {viewMode === "full" && (
+          <pre className="px-4 py-3 text-gray-200 whitespace-pre-wrap leading-5">
             {proposedPrompt}
           </pre>
         )}
       </div>
+
+      {/* Stats row */}
+      {viewMode !== "full" && (() => {
+        const added = changes.filter((c) => c.added).reduce((n, c) => n + c.value.split("\n").length - 1, 0);
+        const removed = changes.filter((c) => c.removed).reduce((n, c) => n + c.value.split("\n").length - 1, 0);
+        return (
+          <div className="px-4 py-1.5 border-t border-green-700/20 flex gap-4 text-xs">
+            <span className="text-green-400">+{added} added</span>
+            <span className="text-red-400">−{removed} removed</span>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -289,7 +289,7 @@ export function InlineDiff({ changes }: { changes: Change[] }) {
   );
 }
 
-function SplitDiff({ changes }: { changes: Change[] }) {
+export function SplitDiff({ changes }: { changes: Change[] }) {
   const leftLines: { text: string; type: "removed" | "unchanged" }[] = [];
   const rightLines: { text: string; type: "added" | "unchanged" }[] = [];
 
