@@ -492,6 +492,19 @@ function loadMsgs(key: string): Message[] {
   try { return JSON.parse(localStorage.getItem(key) ?? "[]"); } catch { return []; }
 }
 
+// Pure helper — scans a message string for a strategy/prompt code block and
+// returns its content, or null if none is found.
+// Shared between the streaming callback and the lazy proposedPrompt initializer
+// so the diff banner survives page refreshes and collapse/expand cycles.
+function extractPromptFromText(text: string): string | null {
+  let m = text.match(/```strategy[^\n]*\n([\s\S]*?)```/i);
+  if (!m) m = text.match(/```prompt[^\n]*\n([\s\S]*?)```/i);
+  // Truncated response — no closing fence, grab everything after the opening tag
+  if (!m) m = text.match(/```strategy[^\n]*\n([\s\S]+)$/i);
+  if (!m) m = text.match(/```prompt[^\n]*\n([\s\S]+)$/i);
+  return m ? m[1].trim() : null;
+}
+
 // ChatSection: fixed bottom bar. The AI auto-detects intent — if the user
 // asks for a prompt improvement it streams an explanation then a code block
 // (diff banner); otherwise it answers as a general trading advisor.
@@ -503,7 +516,15 @@ function ChatSection({ id }: { id: string }) {
   const [messages, setMessages] = useState<Message[]>(() => loadMsgs(chatKey));
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  const [proposedPrompt, setProposedPrompt] = useState<string | null>(null);
+  // Lazily initialised from localStorage so the diff banner survives page
+  // refreshes and collapse / expand cycles without extra effects.
+  const [proposedPrompt, setProposedPrompt] = useState<string | null>(() => {
+    const msgs = loadMsgs(chatKey);
+    if (!msgs.length) return null;
+    const last = msgs[msgs.length - 1];
+    if (last.role !== "assistant" || !last.content) return null;
+    return extractPromptFromText(last.content);
+  });
 
   const panelRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -550,13 +571,8 @@ function ChatSection({ id }: { id: string }) {
   }, [open]);
 
   const extractProposedPrompt = useCallback((text: string) => {
-    // 1. Properly closed block (ideal case after max_tokens fix)
-    let m = text.match(/```strategy[^\n]*\n([\s\S]*?)```/i);
-    if (!m) m = text.match(/```prompt[^\n]*\n([\s\S]*?)```/i);
-    // 2. Truncated response — no closing ```, grab everything after the opening tag
-    if (!m) m = text.match(/```strategy[^\n]*\n([\s\S]+)$/i);
-    if (!m) m = text.match(/```prompt[^\n]*\n([\s\S]+)$/i);
-    if (m) setProposedPrompt(m[1].trim());
+    const extracted = extractPromptFromText(text);
+    if (extracted) setProposedPrompt(extracted);
   }, []);
 
   const send = useCallback(
