@@ -697,7 +697,11 @@ function ChatSection({ id }: { id: string }) {
           });
         }
       } finally {
-        setMessages((prev) => prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)));
+        setMessages((prev) =>
+          prev
+            .map((m) => (m.streaming ? { ...m, streaming: false } : m))
+            .filter((m) => m.role !== "assistant" || m.content.trim().length > 0)
+        );
         setIsStreaming(false);
         abortRef.current = null;
       }
