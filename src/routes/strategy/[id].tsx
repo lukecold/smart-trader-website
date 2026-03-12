@@ -489,7 +489,10 @@ const QUICK_PROMPTS = [
 ];
 
 function loadMsgs(key: string): Message[] {
-  try { return JSON.parse(localStorage.getItem(key) ?? "[]"); } catch { return []; }
+  try {
+    const parsed: Message[] = JSON.parse(localStorage.getItem(key) ?? "[]");
+    return parsed.filter((m) => m.role !== "assistant" || m.content.trim().length > 0);
+  } catch { return []; }
 }
 
 // Pure helper — scans a message string for a strategy/prompt code block and
@@ -788,6 +791,9 @@ function ChatSection({ id }: { id: string }) {
               ) : (
                 <div className="space-y-3">
                   {messages.map((m, i) => {
+                    // Never render a non-streaming assistant message with no content
+                    if (m.role === "assistant" && !m.content && !m.streaming) return null;
+
                     // Pre-compute stripped text once so we can use it in both
                     // the embedDiff guard and the displayText calculation.
                     const strippedContent = m.content
