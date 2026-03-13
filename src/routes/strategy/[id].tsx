@@ -508,6 +508,15 @@ function extractPromptFromText(text: string): string | null {
   return m ? m[1].trim() : null;
 }
 
+// Returns true when the user message is asking to improve/modify the prompt.
+function isImproveMessage(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return [
+    "improve", "update", "modify", "change", "rewrite", "edit",
+    "fix the prompt", "adjust the prompt", "tweak the prompt",
+  ].some((kw) => lower.includes(kw));
+}
+
 // ChatSection: fixed bottom bar. The AI auto-detects intent — if the user
 // asks for a prompt improvement it streams an explanation then a code block
 // (diff banner); otherwise it answers as a general trading advisor.
@@ -529,13 +538,22 @@ function ChatSection({ id }: { id: string }) {
     if (!msgs.length) return null;
     const last = msgs[msgs.length - 1];
     if (last.role !== "assistant" || !last.content) return null;
+    // Code-block case: AI wrapped the improved prompt in ```strategy...```
     const extracted = extractPromptFromText(last.content);
-    if (!extracted) return null;
-    const nonCodeText = last.content
-      .replace(/```strategy[\s\S]*?```/gi, "")
-      .replace(/```prompt[\s\S]*?```/gi, "")
-      .trim();
-    return nonCodeText ? extracted : null;
+    if (extracted) {
+      const nonCodeText = last.content
+        .replace(/```strategy[\s\S]*?```/gi, "")
+        .replace(/```prompt[\s\S]*?```/gi, "")
+        .trim();
+      return nonCodeText ? extracted : null;
+    }
+    // Direct case: AI output the improved prompt as raw markdown.
+    // Restore the diff banner if the preceding user message was an improve request.
+    const prevUser = msgs.length >= 2 ? msgs[msgs.length - 2] : null;
+    if (prevUser?.role === "user" && isImproveMessage(prevUser.content) && last.content.trim().length > 100) {
+      return last.content.trim();
+    }
+    return null;
   });
 
   const panelRef = useRef<HTMLDivElement>(null);
@@ -682,9 +700,15 @@ function ChatSection({ id }: { id: string }) {
           }
         }
 
-        // Always try to extract a proposed prompt — the AI may include a
-        // strategy code block for both explicit improvements and general chat.
-        extractProposedPrompt(fullContent);
+        // Try to extract a proposed prompt from a ```strategy``` code block first.
+        // If none found but the user asked to improve the prompt, use the full
+        // AI response directly as the proposed prompt for diffing.
+        const codeExtracted = extractPromptFromText(fullContent);
+        if (codeExtracted) {
+          extractProposedPrompt(fullContent);
+        } else if (isImproveMessage(trimmed) && fullContent.trim().length > 100) {
+          setProposedPrompt(fullContent.trim());
+        }
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
           setMessages((prev) => {
@@ -800,26 +824,24 @@ function ChatSection({ id }: { id: string }) {
                       .replace(/```strategy[\s\S]*?```/gi, "")
                       .replace(/```prompt[\s\S]*?```/gi, "")
                       .trim();
-                    // Only embed the diff banner when:
-                    //  1. proposedPrompt is set (there is a proposed prompt to show)
-                    //  2. Streaming is complete
-                    //  3. This is the last assistant message
-                    //  4. The message actually contains a strategy/prompt code block
-                    //  5. There is non-empty explanation text alongside the code block
-                    //     (guards against code-block-only messages → empty bubble)
+                    // Embed the diff banner when proposedPrompt is set, streaming
+                    // is complete, and this is the last assistant message.
                     const hasStrategyBlock =
                       m.role === "assistant" &&
                       /```(strategy|prompt)/i.test(m.content);
                     const embedDiff =
                       !!proposedPrompt &&
                       !isStreaming &&
-                      hasStrategyBlock &&
-                      !!strippedContent &&
+                      m.role === "assistant" &&
                       i === messages.length - 1;
 
                     // Strip the raw ```strategy...``` block from the displayed text —
                     // we'll show the diff banner instead of the raw code fence.
-                    const displayText = embedDiff ? strippedContent : m.content;
+                    // For direct-improve responses (no code block) the full content IS
+                    // the proposed prompt, so there's nothing to show above the banner.
+                    const displayText = embedDiff
+                      ? (hasStrategyBlock ? strippedContent : "")
+                      : m.content;
 
                     return (
                       <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
