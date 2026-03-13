@@ -528,6 +528,10 @@ function ChatSection({ id }: { id: string }) {
   const [messages, setMessages] = useState<Message[]>(() => loadMsgs(chatKey));
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  // Tracks whether the user clicked "Dismiss" on the diff banner.
+  // Does NOT clear proposedPrompt — dismiss is a temporary collapse, not a delete.
+  // Resets to false whenever the chat panel is opened so the diff re-appears.
+  const [isDiffDismissed, setIsDiffDismissed] = useState(false);
   // Lazily initialised from localStorage so the diff banner survives page
   // refreshes and collapse / expand cycles without extra effects.
   // Only restores the diff banner when the last message has BOTH a code block
@@ -581,6 +585,12 @@ function ChatSection({ id }: { id: string }) {
     if (dist < 80) el.scrollTop = el.scrollHeight;
   }, [messages, open]);
 
+  // Un-collapse the diff banner whenever the chat panel is opened.
+  // Dismiss is a temporary hide — the diff comes back next time the panel opens.
+  useEffect(() => {
+    if (open) setIsDiffDismissed(false);
+  }, [open]);
+
   // Collapse when clicking outside
   useEffect(() => {
     if (!open) return;
@@ -620,6 +630,7 @@ function ChatSection({ id }: { id: string }) {
       setInput("");
       setOpen(true);
       setProposedPrompt(null);
+      setIsDiffDismissed(false);
 
       // Inject cycle data when user mentions specific cycles
       let messageWithCtx = trimmed;
@@ -756,6 +767,7 @@ function ChatSection({ id }: { id: string }) {
   const clearHistory = () => {
     setMessages([]);
     setProposedPrompt(null);
+    setIsDiffDismissed(false);
   };
 
   return (
@@ -831,6 +843,7 @@ function ChatSection({ id }: { id: string }) {
                       /```(strategy|prompt)/i.test(m.content);
                     const embedDiff =
                       !!proposedPrompt &&
+                      !isDiffDismissed &&
                       !isStreaming &&
                       m.role === "assistant" &&
                       i === messages.length - 1;
@@ -865,7 +878,7 @@ function ChatSection({ id }: { id: string }) {
                                 proposedPrompt={proposedPrompt}
                                 onApply={handleApplyProposed}
                                 applying={updatePrompt.isPending}
-                                onDismiss={() => setProposedPrompt(null)}
+                                onDismiss={() => setIsDiffDismissed(true)}
                               />
                             </>
                           ) : (
