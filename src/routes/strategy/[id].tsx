@@ -508,6 +508,11 @@ function extractPromptFromText(text: string): string | null {
   return m ? m[1].trim() : null;
 }
 
+// Sentinel inserted into message content at the boundary between explanation
+// and the proposed-prompt section.  Null byte never appears in LLM output and
+// survives JSON / localStorage round-trips (\u0000).
+const PROMPT_SENTINEL = "\x00";
+
 // Returns true when the user message is asking to improve/modify the prompt.
 function isImproveMessage(msg: string): boolean {
   const lower = msg.toLowerCase();
@@ -542,6 +547,12 @@ function ChatSection({ id }: { id: string }) {
     if (!msgs.length) return null;
     const last = msgs[msgs.length - 1];
     if (last.role !== "assistant" || !last.content) return null;
+    // Sentinel case: backend emitted prompt_start event; content after sentinel is the prompt.
+    const sentinelIdx = last.content.indexOf(PROMPT_SENTINEL);
+    if (sentinelIdx >= 0) {
+      const promptPart = last.content.slice(sentinelIdx + 1).trim();
+      if (promptPart.length > 50) return promptPart;
+    }
     // Code-block case: AI wrapped the improved prompt in ```strategy...```
     const extracted = extractPromptFromText(last.content);
     if (extracted) {
@@ -551,7 +562,7 @@ function ChatSection({ id }: { id: string }) {
         .trim();
       return nonCodeText ? extracted : null;
     }
-    // Direct case: AI output the improved prompt as raw markdown.
+    // Direct case: AI output the improved prompt as raw markdown (no sentinel, no code block).
     // Restore the diff banner if the preceding user message was an improve request.
     const prevUser = msgs.length >= 2 ? msgs[msgs.length - 2] : null;
     if (prevUser?.role === "user" && isImproveMessage(prevUser.content) && last.content.trim().length > 100) {
@@ -653,6 +664,7 @@ function ChatSection({ id }: { id: string }) {
               ? m.content
                   .replace(/```strategy[\s\S]*?```/gi, "[strategy code block omitted]")
                   .replace(/```prompt[\s\S]*?```/gi, "[strategy code block omitted]")
+                  .replaceAll(PROMPT_SENTINEL, "\n\n")
                   .trim()
               : m.content,
         }));
@@ -694,6 +706,20 @@ function ChatSection({ id }: { id: string }) {
             if (payload === "[DONE]") break;
             try {
               const parsed: unknown = JSON.parse(payload);
+              if (parsed && typeof parsed === "object" && "_type" in (parsed as object) &&
+                  (parsed as { _type: string })._type === "prompt_start") {
+                // Backend signals the boundary between explanation and proposed prompt.
+                // Insert a sentinel so we can split them at render / restore time.
+                fullContent += PROMPT_SENTINEL;
+                setMessages((prev) => {
+                  const copy = [...prev];
+                  const last = copy[copy.length - 1];
+                  if (last?.streaming)
+                    copy[copy.length - 1] = { ...last, content: last.content + PROMPT_SENTINEL };
+                  return copy;
+                });
+                continue;
+              }
               let chunk: string;
               if (typeof parsed === "string") chunk = parsed;
               else if (parsed && typeof parsed === "object" && "error" in parsed)
@@ -711,11 +737,16 @@ function ChatSection({ id }: { id: string }) {
           }
         }
 
-        // Try to extract a proposed prompt from a ```strategy``` code block first.
-        // If none found but the user asked to improve the prompt, use the full
-        // AI response directly as the proposed prompt for diffing.
+        // Determine the proposed prompt in priority order:
+        // 1. Sentinel (backend emitted prompt_start) → use content after sentinel.
+        // 2. Code block (```strategy...```) → existing extraction logic.
+        // 3. Improve-keyword fallback → use full response (no sentinel/code block).
+        const sentinelIdx = fullContent.indexOf(PROMPT_SENTINEL);
         const codeExtracted = extractPromptFromText(fullContent);
-        if (codeExtracted) {
+        if (sentinelIdx >= 0) {
+          const promptPart = fullContent.slice(sentinelIdx + 1).trim();
+          if (promptPart.length > 50) setProposedPrompt(promptPart);
+        } else if (codeExtracted) {
           extractProposedPrompt(fullContent);
         } else if (isImproveMessage(trimmed) && fullContent.trim().length > 100) {
           setProposedPrompt(fullContent.trim());
@@ -848,13 +879,19 @@ function ChatSection({ id }: { id: string }) {
                       m.role === "assistant" &&
                       i === messages.length - 1;
 
-                    // Strip the raw ```strategy...``` block from the displayed text —
-                    // we'll show the diff banner instead of the raw code fence.
-                    // For direct-improve responses (no code block) the full content IS
-                    // the proposed prompt, so there's nothing to show above the banner.
+                    // Compute display text:
+                    // • embedDiff + code block  → strip the code fence, show explanation
+                    // • embedDiff + sentinel     → show only the part before the sentinel
+                    // • embedDiff + neither      → nothing above the banner (full content is prompt)
+                    // • plain (no diff banner)   → full content, sentinel replaced with newline
+                    const hasSentinel = m.content.includes(PROMPT_SENTINEL);
                     const displayText = embedDiff
-                      ? (hasStrategyBlock ? strippedContent : "")
-                      : m.content;
+                      ? hasStrategyBlock
+                        ? strippedContent
+                        : hasSentinel
+                          ? m.content.split(PROMPT_SENTINEL)[0].trim()
+                          : ""
+                      : m.content.replaceAll(PROMPT_SENTINEL, "\n\n");
 
                     return (
                       <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
