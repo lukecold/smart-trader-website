@@ -407,7 +407,13 @@ function TradeHistorySection({ id }: { id: string }) {
                           <span className="text-gray-400">@{formatNumber(a.avgExecPrice, 2)}</span>
                         )
                       )}
-                      {/* P&L — show on all close actions (even 0) */}
+                      {/* Cost (notional) */}
+                      {a.notionalEntry != null && a.notionalEntry !== 0 && (
+                        <span className="text-gray-500">
+                          cost <span className="text-gray-400">{formatCurrency(a.notionalEntry)}</span>
+                        </span>
+                      )}
+                      {/* P&L — show on all close actions */}
                       {a.action.includes("close") && a.realizedPnl != null && (
                         <span
                           className={cn(

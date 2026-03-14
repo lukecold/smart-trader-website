@@ -69,6 +69,7 @@ export interface TradeAction {
   avgExecPrice: number | null;
   entryPrice: number | null;
   exitPrice: number | null;
+  notionalEntry: number | null;
   feeCost: number | null;
   realizedPnl: number | null;
   realizedPnlPct: number | null;
