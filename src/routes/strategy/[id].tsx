@@ -799,6 +799,7 @@ function ChatSection({ id }: { id: string }) {
   };
 
   const clearHistory = () => {
+    localStorage.removeItem(chatKey); // wipe immediately so cleared turns never reach the AI
     setMessages([]);
     setProposedPrompt(null);
     setIsDiffDismissed(false);
