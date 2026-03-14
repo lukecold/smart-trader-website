@@ -551,7 +551,8 @@ function ChatSection({ id }: { id: string }) {
     const sentinelIdx = last.content.indexOf(PROMPT_SENTINEL);
     if (sentinelIdx >= 0) {
       const promptPart = last.content.slice(sentinelIdx + 1).trim();
-      if (promptPart.length > 50) return promptPart;
+      const final = extractPromptFromText(promptPart) ?? promptPart;
+      if (final.length > 50) return final;
     }
     // Code-block case: AI wrapped the improved prompt in ```strategy...```
     const extracted = extractPromptFromText(last.content);
@@ -745,7 +746,9 @@ function ChatSection({ id }: { id: string }) {
         const codeExtracted = extractPromptFromText(fullContent);
         if (sentinelIdx >= 0) {
           const promptPart = fullContent.slice(sentinelIdx + 1).trim();
-          if (promptPart.length > 50) setProposedPrompt(promptPart);
+          // Strip code fences if the LLM wrapped the prompt in ```strategy...```
+          const final = extractPromptFromText(promptPart) ?? promptPart;
+          if (final.length > 50) setProposedPrompt(final);
         } else if (codeExtracted) {
           extractProposedPrompt(fullContent);
         } else if (isImproveMessage(trimmed) && fullContent.trim().length > 100) {
