@@ -11,6 +11,7 @@ export interface Strategy {
   exchangeId: string | null;
   modelId: string | null;
   userId: string | null;
+  pushStatus: string | null;
 }
 
 export interface StrategyList {

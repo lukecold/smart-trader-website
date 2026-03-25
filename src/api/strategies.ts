@@ -33,6 +33,12 @@ export function useStrategies(status?: string) {
   });
 }
 
+export function usePushStatus(id: string) {
+  const { data } = useStrategies();
+  const s = data?.strategies.find((s) => s.strategyId === id);
+  return s?.pushStatus ?? null;
+}
+
 export function useStrategyPerformance(id: string) {
   return useQuery({
     queryKey: KEYS.performance(id),

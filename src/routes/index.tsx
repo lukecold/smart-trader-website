@@ -111,6 +111,16 @@ function StrategyCard({
             >
               {s.status}
             </span>
+            {s.pushStatus === "empowered" && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">
+                empowered
+              </span>
+            )}
+            {s.pushStatus === "degraded" && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-400">
+                degraded
+              </span>
+            )}
           </div>
 
           <div className="mt-3 flex items-center gap-6 text-sm">

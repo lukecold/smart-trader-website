@@ -9,6 +9,7 @@ import {
   useClosePosition,
   usePruneSnapshots,
   useUpdatePrompt,
+  usePushStatus,
 } from "@/api/strategies";
 import { formatCurrency, formatPct, formatNumber, cn } from "@/lib/utils";
 import { PromptSection, InlineDiff, SplitDiff } from "@/components/strategy/PromptSection";
@@ -172,6 +173,7 @@ function EquityCurveSection({ id }: { id: string }) {
 function OverviewSection({ id }: { id: string }) {
   const { data: perf } = useStrategyPerformance(id);
   const { data: port } = usePortfolioSummary(id);
+  const pushStatus = usePushStatus(id);
   if (!perf) return null;
 
   const roiColor =
@@ -190,7 +192,19 @@ function OverviewSection({ id }: { id: string }) {
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-      <h3 className="text-lg font-semibold text-white mb-4">Overview</h3>
+      <div className="flex items-center gap-3 mb-4">
+        <h3 className="text-lg font-semibold text-white">Overview</h3>
+        {pushStatus === "empowered" && (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">
+            empowered
+          </span>
+        )}
+        {pushStatus === "degraded" && (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-400">
+            degraded
+          </span>
+        )}
+      </div>
 
       {/* Config row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
