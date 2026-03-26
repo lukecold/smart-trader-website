@@ -361,7 +361,7 @@ function TradeHistorySection({ id }: { id: string }) {
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-      <h3 className="text-lg font-semibold text-white mb-4">Trade History</h3>
+      <h3 className="text-lg font-semibold text-white mb-4">Decision History</h3>
       <div className="space-y-4">
         {cycles.map((cycle) => (
           <div key={cycle.composeId} className="border border-gray-800 rounded-lg p-4">
