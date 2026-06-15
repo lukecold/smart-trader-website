@@ -397,10 +397,24 @@ function TradeHistorySection({ id }: { id: string }) {
                       >
                         {a.action.replace(/_/g, " ").toUpperCase()}
                       </span>
+                      {/* Attribution: distinguish engine-initiated actions from LLM ones */}
+                      {a.origin === "engine" && (
+                        <span
+                          className="text-xs px-1.5 py-0.5 rounded font-mono bg-purple-500/15 text-purple-300"
+                          title={a.note ?? "engine-initiated"}
+                        >
+                          ENGINE
+                        </span>
+                      )}
                       <span className="text-white">{a.symbol}</span>
                       {a.quantity != null && (
                         <span className="text-gray-500">
                           qty={formatNumber(a.quantity)}
+                        </span>
+                      )}
+                      {a.note && (
+                        <span className="text-gray-500 italic truncate max-w-[16rem]">
+                          {a.note}
                         </span>
                       )}
                     </div>

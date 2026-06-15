@@ -77,6 +77,11 @@ export interface TradeAction {
   holdingTimeMs: number | null;
   entryAt: string | null;
   exitAt: string | null;
+  // Attribution: "engine" for code-initiated actions (#4 stop-trigger, #2
+  // trend-reversal), "llm" otherwise. `note` carries the engine reason
+  // (e.g. "engine_stop_trigger: stop_loss").
+  origin?: string;
+  note?: string | null;
 }
 
 export interface ComposeCycle {
