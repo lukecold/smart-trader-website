@@ -70,20 +70,70 @@ jobs:
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:${{ steps.version.outputs.tag }}
 
-      # ── 3. Deploy to VM ───────────────────────────────────────────────────
-      - name: Deploy to VM
+      # ── 3. Deploy to ECS via Cloud Assistant ──────────────────────────────
+      # No inbound SSH: GitHub's runner calls the Aliyun API, and the Cloud
+      # Assistant agent already on the ECS instance runs the deploy locally.
+      # This sidesteps the security-group block on port 22 (CI runner IPs are
+      # not allowlisted) and lets us close public SSH entirely. Identity is a
+      # scoped RAM AccessKey, not a network ACL.
+      #
+      # Required repo secrets:
+      #   ALIYUN_ACCESS_KEY_ID / ALIYUN_ACCESS_KEY_SECRET  — RAM user with
+      #       ecs:RunCommand + ecs:DescribeInvocationResults
+      #   ALIYUN_REGION_ID      — e.g. cn-hongkong
+      #   ALIYUN_INSTANCE_ID    — the ECS instance id (i-xxxxxxxx)
+      - name: Deploy to ECS (Cloud Assistant RunCommand)
         if: steps.version.outputs.bump != 'none'
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          script: |
-            set -e
-            cd /opt/smart-trader
-            docker compose pull website
-            docker compose up -d website
-            docker image prune -f
+        env:
+          ALIBABA_CLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+          ALIBABA_CLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+          REGION_ID: ${{ secrets.ALIYUN_REGION_ID }}
+          INSTANCE_ID: ${{ secrets.ALIYUN_INSTANCE_ID }}
+        run: |
+          set -euo pipefail
+
+          # Install the Aliyun CLI (no marketplace-action dependency).
+          curl -fsSL -o /tmp/aliyun.tgz https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz
+          tar -xzf /tmp/aliyun.tgz -C /tmp
+          sudo install /tmp/aliyun /usr/local/bin/aliyun
+          aliyun configure set --mode AK --region "$REGION_ID" \
+            --access-key-id "$ALIBABA_CLOUD_ACCESS_KEY_ID" \
+            --access-key-secret "$ALIBABA_CLOUD_ACCESS_KEY_SECRET"
+
+          # The deploy script Cloud Assistant runs *on the instance*.
+          SCRIPT='set -e; cd /opt/smart-trader && docker compose pull website && docker compose up -d website && docker image prune -f'
+          B64=$(printf '%s' "$SCRIPT" | base64 -w0)
+
+          echo "Invoking Cloud Assistant on $INSTANCE_ID ($REGION_ID)…"
+          INVOKE_ID=$(aliyun ecs RunCommand \
+            --RegionId "$REGION_ID" \
+            --InstanceId.1 "$INSTANCE_ID" \
+            --Type RunShellScript \
+            --ContentEncoding Base64 \
+            --CommandContent "$B64" \
+            --Timeout 600 \
+            | jq -r '.InvokeId')
+          echo "InvokeId=$INVOKE_ID"
+
+          # Poll until the command finishes (RunCommand itself returns immediately).
+          for i in $(seq 1 40); do
+            sleep 5
+            R=$(aliyun ecs DescribeInvocationResults \
+              --RegionId "$REGION_ID" --InstanceId "$INSTANCE_ID" --InvokeId "$INVOKE_ID")
+            STATUS=$(echo "$R" | jq -r '.Invocation.InvocationResults.InvocationResult[0].InvocationStatus')
+            echo "[$i] status=$STATUS"
+            OUT=$(echo "$R" | jq -r '.Invocation.InvocationResults.InvocationResult[0].Output')
+            case "$STATUS" in
+              Success)
+                echo "----- instance output -----"; echo "$OUT" | base64 -d 2>/dev/null || echo "$OUT"
+                exit 0 ;;
+              Failed|Error|Timeout|Cancelled|Terminated|Stopped)
+                echo "::error::Cloud Assistant deploy ended with status $STATUS"
+                echo "$OUT" | base64 -d 2>/dev/null || echo "$OUT"
+                exit 1 ;;
+            esac
+          done
+          echo "::error::Timed out waiting for Cloud Assistant result"; exit 1
 
       # ── 4. Tag the commit (after successful deploy) ───────────────────────
       - name: Create version tag
