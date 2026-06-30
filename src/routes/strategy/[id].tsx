@@ -7,13 +7,14 @@ import {
   useStrategyDetail,
   useEquityCurve,
   useClosePosition,
-  usePruneSnapshots,
   useUpdatePrompt,
   usePushStatus,
+  useStrategyStatus,
 } from "@/api/strategies";
 import { formatCurrency, formatPct, formatNumber, cn } from "@/lib/utils";
 import { PromptSection, InlineDiff, SplitDiff } from "@/components/strategy/PromptSection";
 import { BacktestSection } from "@/components/strategy/BacktestSection";
+import { Markdown } from "@/components/ui/Markdown";
 import { diffLines } from "diff";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import type { ComposeCycle } from "@/types/strategy";
@@ -37,7 +38,7 @@ export function StrategyDetail() {
         &larr; Back to Dashboard
       </Link>
       <OverviewSection id={id} />
-      <EquityCurveSection id={id} />
+      <PerformanceSection id={id} />
       <HoldingsSection id={id} />
       <PromptSectionWrapper id={id} />
       <BacktestSectionWrapper id={id} />
@@ -47,122 +48,192 @@ export function StrategyDetail() {
   );
 }
 
-// ----- Equity Curve -----
+// ----- Performance -----
 
-function EquityCurveSection({ id }: { id: string }) {
+type RangeKey = "1W" | "MTD" | "1M" | "3M" | "YTD" | "1Y" | "ALL";
+
+const RANGES: RangeKey[] = ["1W", "MTD", "1M", "3M", "YTD", "1Y", "ALL"];
+
+// Subtracts `n` months from `now` without the setMonth day-of-month overflow
+// (e.g. May 31 minus 1 month must be Apr 30, not May 1). The day is clamped to
+// the number of days in the target month.
+function subMonths(now: Date, n: number): number {
+  const targetMonth = now.getMonth() - n;
+  // Last day of the target month: day 0 of the following month.
+  const daysInTarget = new Date(now.getFullYear(), targetMonth + 1, 0).getDate();
+  const d = new Date(now);
+  d.setDate(1); // avoid overflow while shifting the month
+  d.setMonth(targetMonth); // negative months roll the year back automatically
+  d.setDate(Math.min(now.getDate(), daysInTarget));
+  return d.getTime();
+}
+
+// Returns the earliest timestamp (ms) to include for the given range, measured
+// from `now`. "ALL" returns -Infinity (no lower bound).
+function rangeCutoff(key: RangeKey, now: Date): number {
+  const d = new Date(now);
+  switch (key) {
+    case "1W":
+      d.setDate(d.getDate() - 7);
+      return d.getTime();
+    case "MTD":
+      return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    case "1M":
+      return subMonths(now, 1);
+    case "3M":
+      return subMonths(now, 3);
+    case "YTD":
+      return new Date(now.getFullYear(), 0, 1).getTime();
+    case "1Y":
+      return subMonths(now, 12);
+    case "ALL":
+      return Number.NEGATIVE_INFINITY;
+  }
+}
+
+const DAY_MS = 86_400_000;
+
+function PerformanceSection({ id }: { id: string }) {
   const { data: points } = useEquityCurve(id);
-  const pruneMutation = usePruneSnapshots();
-  const [pruning, setPruning] = useState(false);
-
-  const handlePrune = async () => {
-    const input = window.prompt(
-      "Remove datapoints below this portfolio value (e.g. 2900):"
-    );
-    if (!input) return;
-    const minValue = parseFloat(input);
-    if (isNaN(minValue) || minValue <= 0) {
-      alert("Please enter a valid positive number.");
-      return;
-    }
-    setPruning(true);
-    try {
-      const result = await pruneMutation.mutateAsync({ id, minValue });
-      alert(`Removed ${(result as { deleted?: number })?.deleted ?? 0} snapshot(s).`);
-    } catch {
-      alert("Failed to prune snapshots.");
-    } finally {
-      setPruning(false);
-    }
-  };
+  const [range, setRange] = useState<RangeKey>("ALL");
 
   if (!points || points.length < 2) return null;
 
-  const formatted = points.map((p) => ({
-    time: new Date(p.ts).toLocaleDateString("en-US", {
+  const cutoff = rangeCutoff(range, new Date());
+  const view = points.filter((p) => p.ts >= cutoff);
+  const enough = view.length >= 2;
+
+  // Span of the visible window drives how dense the x-axis labels are.
+  const spanMs = enough ? view[view.length - 1].ts - view[0].ts : 0;
+  const fmtAxis = (ts: number) => {
+    const dt = new Date(ts);
+    if (spanMs <= 2 * DAY_MS)
+      return dt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+    if (spanMs <= 120 * DAY_MS)
+      return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return dt.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+  };
+  const fmtFull = (ts: number) =>
+    new Date(ts).toLocaleString("en-US", {
       month: "short",
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-    }),
-    value: p.totalValue,
-  }));
+    });
+
+  const formatted = view.map((p) => ({ ts: p.ts, value: p.totalValue }));
 
   const values = formatted.map((p) => p.value);
-  const minVal = Math.min(...values);
-  const maxVal = Math.max(...values);
+  const minVal = values.length ? Math.min(...values) : 0;
+  const maxVal = values.length ? Math.max(...values) : 0;
   const pad = (maxVal - minVal) * 0.05 || maxVal * 0.01; // 5% of range, or 1% of value if flat
   const yDomain: [number, number] = [minVal - pad, maxVal + pad];
 
-  const first = formatted[0].value;
-  const last = formatted[formatted.length - 1].value;
+  const first = formatted.length ? formatted[0].value : 0;
+  const last = formatted.length ? formatted[formatted.length - 1].value : 0;
   const isUp = last >= first;
+  const changePct = first !== 0 ? ((last - first) / Math.abs(first)) * 100 : 0;
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-white">Equity Curve</h3>
-        <button
-          onClick={handlePrune}
-          disabled={pruning}
-          className="text-xs px-2.5 py-1 rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-200 disabled:opacity-40 transition-colors"
-          title="Remove outlier datapoints below a threshold"
-        >
-          {pruning ? "Pruning…" : "Remove Outliers"}
-        </button>
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <h3 className="text-lg font-semibold text-white">Performance</h3>
+          {enough && (
+            <span
+              className={cn(
+                "text-xs font-medium px-2 py-0.5 rounded-full",
+                isUp ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"
+              )}
+              title={`Change over the selected period (${range})`}
+            >
+              {changePct >= 0 ? "+" : ""}
+              {changePct.toFixed(2)}%
+            </span>
+          )}
+        </div>
+        {/* Range selector — zoom the window in and out */}
+        <div className="flex rounded-lg bg-gray-800/80 p-0.5 gap-0.5">
+          {RANGES.map((r) => (
+            <button
+              key={r}
+              onClick={() => setRange(r)}
+              className={cn(
+                "px-2.5 py-1 rounded text-xs font-medium transition-colors",
+                range === r
+                  ? "bg-gray-600 text-white"
+                  : "text-gray-400 hover:text-gray-200"
+              )}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="h-56">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={formatted} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
-            <defs>
-              <linearGradient id="equity-grad" x1="0" y1="0" x2="0" y2="1">
-                <stop
-                  offset="5%"
-                  stopColor={isUp ? "#22c55e" : "#ef4444"}
-                  stopOpacity={0.3}
-                />
-                <stop
-                  offset="95%"
-                  stopColor={isUp ? "#22c55e" : "#ef4444"}
-                  stopOpacity={0.02}
-                />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-            <XAxis
-              dataKey="time"
-              tick={{ fill: "#6b7280", fontSize: 11 }}
-              tickLine={false}
-              axisLine={false}
-              interval="preserveStartEnd"
-            />
-            <YAxis
-              domain={yDomain}
-              tick={{ fill: "#6b7280", fontSize: 11 }}
-              tickLine={false}
-              axisLine={false}
-              tickFormatter={(v: number) => `$${v.toLocaleString()}`}
-              width={72}
-            />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: "#111827",
-                border: "1px solid #374151",
-                borderRadius: "8px",
-                color: "#f9fafb",
-                fontSize: 12,
-              }}
-              formatter={(v: number) => [`$${v.toLocaleString()}`, "Value"]}
-            />
-            <Area
-              type="monotone"
-              dataKey="value"
-              stroke={isUp ? "#22c55e" : "#ef4444"}
-              strokeWidth={2}
-              fill="url(#equity-grad)"
-              dot={false}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
+        {enough ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={formatted} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
+              <defs>
+                <linearGradient id="equity-grad" x1="0" y1="0" x2="0" y2="1">
+                  <stop
+                    offset="5%"
+                    stopColor={isUp ? "#22c55e" : "#ef4444"}
+                    stopOpacity={0.3}
+                  />
+                  <stop
+                    offset="95%"
+                    stopColor={isUp ? "#22c55e" : "#ef4444"}
+                    stopOpacity={0.02}
+                  />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <XAxis
+                dataKey="ts"
+                type="number"
+                scale="time"
+                domain={["dataMin", "dataMax"]}
+                tick={{ fill: "#6b7280", fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+                interval="preserveStartEnd"
+                tickFormatter={fmtAxis}
+              />
+              <YAxis
+                domain={yDomain}
+                tick={{ fill: "#6b7280", fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v: number) => `$${v.toLocaleString()}`}
+                width={72}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: "#111827",
+                  border: "1px solid #374151",
+                  borderRadius: "8px",
+                  color: "#f9fafb",
+                  fontSize: 12,
+                }}
+                labelFormatter={(label: number) => fmtFull(label)}
+                formatter={(v: number) => [`$${v.toLocaleString()}`, "Value"]}
+              />
+              <Area
+                type="monotone"
+                dataKey="value"
+                stroke={isUp ? "#22c55e" : "#ef4444"}
+                strokeWidth={2}
+                fill="url(#equity-grad)"
+                dot={false}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="h-full flex items-center justify-center text-sm text-gray-500">
+            Not enough data in this range — try a wider window.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -174,7 +245,10 @@ function OverviewSection({ id }: { id: string }) {
   const { data: perf } = useStrategyPerformance(id);
   const { data: port } = usePortfolioSummary(id);
   const pushStatus = usePushStatus(id);
+  const status = useStrategyStatus(id);
   if (!perf) return null;
+
+  const isRunning = status === "running";
 
   const roiColor =
     perf.returnRatePct != null
@@ -194,6 +268,24 @@ function OverviewSection({ id }: { id: string }) {
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
       <div className="flex items-center gap-3 mb-4">
         <h3 className="text-lg font-semibold text-white">Overview</h3>
+        {status && (
+          <span
+            className={cn(
+              "flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full",
+              isRunning
+                ? "bg-green-500/10 text-green-400"
+                : "bg-gray-700 text-gray-400"
+            )}
+          >
+            <span
+              className={cn(
+                "w-1.5 h-1.5 rounded-full",
+                isRunning ? "bg-green-500 animate-pulse" : "bg-gray-500"
+              )}
+            />
+            {status}
+          </span>
+        )}
         {pushStatus === "empowered" && (
           <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">
             empowered
@@ -374,9 +466,7 @@ function TradeHistorySection({ id }: { id: string }) {
               </span>
             </div>
             {cycle.rationale && (
-              <p className="text-sm text-gray-400 mb-3 italic">
-                {cycle.rationale}
-              </p>
+              <Markdown content={cycle.rationale} className="mb-3 text-gray-400" />
             )}
             {cycle.actions.length > 0 && (
               <div className="space-y-1">
@@ -946,7 +1036,10 @@ function ChatSection({ id }: { id: string }) {
                             <>
                               {/* Explanation text (bullets from step 2), above the diff */}
                               {displayText && (
-                                <p className="whitespace-pre-wrap mb-3">{displayText}</p>
+                                <Markdown
+                                  content={displayText}
+                                  className="mb-3 text-gray-200"
+                                />
                               )}
                               <PromptDiffBanner
                                 currentPrompt={currentPrompt ?? ""}
@@ -956,6 +1049,11 @@ function ChatSection({ id }: { id: string }) {
                                 onDismiss={() => setIsDiffDismissed(true)}
                               />
                             </>
+                          ) : m.role === "assistant" && !m.streaming ? (
+                            // Finished assistant turn: render markdown (tables,
+                            // bullets, code). Streaming/user text stays raw so the
+                            // inline typing indicator sits beside partial content.
+                            <Markdown content={displayText} className="text-gray-200" />
                           ) : (
                             <>
                               {displayText}

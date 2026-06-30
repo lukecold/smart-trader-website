@@ -39,6 +39,14 @@ export function usePushStatus(id: string) {
   return s?.pushStatus ?? null;
 }
 
+/** Returns the live run status ("running" / "stopped" / …) for a strategy,
+ *  derived from the polled strategy list, or null until it loads. */
+export function useStrategyStatus(id: string) {
+  const { data } = useStrategies();
+  const s = data?.strategies.find((s) => s.strategyId === id);
+  return s?.status ?? null;
+}
+
 export function useStrategyPerformance(id: string) {
   return useQuery({
     queryKey: KEYS.performance(id),
@@ -197,23 +205,6 @@ export function useClosePosition() {
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: KEYS.holdings(id) });
       qc.invalidateQueries({ queryKey: KEYS.portfolio(id) });
-    },
-  });
-}
-
-export function usePruneSnapshots() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ id, minValue }: { id: string; minValue: number }) => {
-      const res = await api.delete<{ deleted: number }>(
-        `/strategies/snapshots?id=${id}&min_value=${minValue}`
-      );
-      return res.data;
-    },
-    onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ["strategy", id, "equity"] });
-      qc.invalidateQueries({ queryKey: KEYS.portfolio(id) });
-      qc.invalidateQueries({ queryKey: KEYS.performance(id) });
     },
   });
 }
