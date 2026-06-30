@@ -1,15 +1,41 @@
 import { useEffect, useRef, useState } from "react";
-import { requestMagicLink } from "@/api/auth";
+import { requestMagicLink, loginWithGoogle } from "@/api/auth";
 import { useAuthModalStore } from "@/stores/authModal";
+import { useAuthStore } from "@/stores/auth";
+import { useGoogleSignIn } from "@/hooks/useGoogleSignIn";
 
 export function LoginModal() {
-  const { isOpen, close } = useAuthModalStore();
+  const { isOpen, close, pendingAction } = useAuthModalStore();
+  const { setAuth } = useAuthStore();
   const [email, setEmail] = useState("");
   const [stage, setStage] = useState<"input" | "sent">("input");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+
+  // Verify a Google ID token with the backend, then authenticate locally.
+  const handleGoogleCredential = async (idToken: string) => {
+    setError("");
+    setGoogleLoading(true);
+    try {
+      const { email: googleEmail, sessionToken } = await loginWithGoogle(idToken);
+      setAuth(googleEmail, sessionToken);
+      pendingAction?.();
+      close();
+    } catch (err) {
+      setError((err as Error).message || "Google sign-in failed. Please try again.");
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const {
+    clientId: googleClientId,
+    buttonRef: googleButtonRef,
+    error: googleError,
+  } = useGoogleSignIn(isOpen && stage === "input", handleGoogleCredential);
 
   // Focus input when modal opens
   useEffect(() => {
@@ -24,6 +50,7 @@ export function LoginModal() {
       setStage("input");
       setError("");
       setLoading(false);
+      setGoogleLoading(false);
     }
   }, [isOpen]);
 
@@ -61,7 +88,9 @@ export function LoginModal() {
             <h2 className="text-white font-semibold text-lg">Login required</h2>
             <p className="text-gray-400 text-sm mt-0.5">
               {stage === "input"
-                ? "Enter your email to receive a magic link"
+                ? googleClientId
+                  ? "Continue with Google or get a magic link"
+                  : "Enter your email to receive a magic link"
                 : "Check your inbox"}
             </p>
           </div>
@@ -74,7 +103,31 @@ export function LoginModal() {
         </div>
 
         {stage === "input" ? (
-          <form onSubmit={handleSend} className="space-y-4">
+          <>
+            {/* Google sign-in — only shown when configured server-side */}
+            {googleClientId && (
+              <div className="mb-2">
+                <div className="flex justify-center min-h-[44px] items-center">
+                  {googleLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-gray-400">
+                      <span className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                      Signing in…
+                    </div>
+                  ) : (
+                    <div ref={googleButtonRef} />
+                  )}
+                </div>
+                {googleError && (
+                  <p className="text-red-400 text-xs mt-2 text-center">{googleError}</p>
+                )}
+                <div className="flex items-center gap-3 my-5">
+                  <div className="h-px flex-1 bg-gray-800" />
+                  <span className="text-xs text-gray-600">or</span>
+                  <div className="h-px flex-1 bg-gray-800" />
+                </div>
+              </div>
+            )}
+            <form onSubmit={handleSend} className="space-y-4">
             <input
               ref={inputRef}
               type="email"
@@ -89,12 +142,13 @@ export function LoginModal() {
             )}
             <button
               type="submit"
-              disabled={loading || !email.trim()}
+              disabled={loading || googleLoading || !email.trim()}
               className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors text-sm"
             >
               {loading ? "Sending…" : "Send magic link"}
             </button>
-          </form>
+            </form>
+          </>
         ) : (
           <div className="text-center space-y-4">
             <div className="text-5xl">✉️</div>
