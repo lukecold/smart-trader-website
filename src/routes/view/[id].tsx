@@ -7,8 +7,9 @@ import {
   useCopyTrade,
   useStopCopyTrade,
 } from "@/api/strategies";
-import { formatCurrency, formatPct, cn } from "@/lib/utils";
+import { formatPct, cn } from "@/lib/utils";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
+import { CopyTradeModal } from "@/components/strategy/CopyTradeModal";
 import type { RedactedView, PerfPoint } from "@/types/strategy";
 import {
   AreaChart,
@@ -75,6 +76,7 @@ function Header({ view: v, id }: { view: RedactedView; id: string }) {
   const unfollowMutation = useUnfollow();
   const copyTradeMutation = useCopyTrade();
   const uncopyTradeMutation = useStopCopyTrade();
+  const [showCopyModal, setShowCopyModal] = useState(false);
 
   const isRunning = v.status === "running";
   const pctColor =
@@ -162,16 +164,7 @@ function Header({ view: v, id }: { view: RedactedView; id: string }) {
             </button>
           ) : (
             <button
-              onClick={() =>
-                withAuth(() => {
-                  const raw = window.prompt("Amount to allocate (USD)");
-                  if (raw == null) return;
-                  const allocation = Number(raw);
-                  if (Number.isFinite(allocation) && allocation > 0) {
-                    copyTradeMutation.mutate({ id, allocation });
-                  }
-                })
-              }
+              onClick={() => withAuth(() => setShowCopyModal(true))}
               className="text-sm px-4 py-2 rounded-lg bg-gray-700 text-gray-200 hover:bg-gray-600 transition-colors"
             >
               Copy-trade
@@ -179,6 +172,19 @@ function Header({ view: v, id }: { view: RedactedView; id: string }) {
           )}
         </div>
       </div>
+      {showCopyModal && (
+        <CopyTradeModal
+          name={v.strategyName || v.strategyId.slice(0, 20)}
+          onCancel={() => setShowCopyModal(false)}
+          onConfirm={(p) => {
+            copyTradeMutation.mutate(
+              { id, ...p },
+              { onSuccess: (data) => data?.warning && alert(data.warning) }
+            );
+            setShowCopyModal(false);
+          }}
+        />
+      )}
       <p className="mt-4 text-xs text-gray-500 border-t border-gray-800/60 pt-3">
         <span className="text-gray-400">Follow</span> bookmarks this strategy so you can track its redacted performance.{" "}
         <span className="text-gray-400">Copy-trade</span> replicates its trades with your own capital — it starts in{" "}

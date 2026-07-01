@@ -335,20 +335,33 @@ export function useUnfollow() {
   });
 }
 
+export interface CopyTradeInput {
+  id: string;
+  allocation: number;
+  mode?: "paper" | "live";
+  onConstraint?: "skip" | "partial";
+  apiKey?: string;
+  apiSecret?: string;
+}
+
 export function useCopyTrade() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({
-      id,
-      allocation,
-    }: {
-      id: string;
-      allocation: number;
-    }) => {
-      await api.post("/strategies/copy-trade", {
-        strategy_id: id,
-        allocation,
-      });
+    mutationFn: async (input: CopyTradeInput) => {
+      const res = await api.post<{ mode: string; warning?: string }>(
+        "/strategies/copy-trade",
+        {
+          strategy_id: input.id,
+          allocation: input.allocation,
+          mode: input.mode ?? "paper",
+          on_constraint: input.onConstraint ?? "skip",
+          // Credentials are sent only for live; the backend seals them into an
+          // encrypted vault and never echoes or stores them in plaintext.
+          api_key: input.apiKey,
+          api_secret: input.apiSecret,
+        }
+      );
+      return res.data;
     },
     onSuccess: (_, { id }) => invalidateSocial(qc, id),
   });
