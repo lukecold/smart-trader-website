@@ -1,0 +1,296 @@
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+  useLeaderboard,
+  useFollow,
+  useUnfollow,
+  useCopyTrade,
+  useStopCopyTrade,
+} from "@/api/strategies";
+import { formatPct, cn } from "@/lib/utils";
+import { useAuthGuard } from "@/hooks/useAuthGuard";
+import type { LeaderboardItem, LeaderboardRange } from "@/types/strategy";
+
+const RANGES: LeaderboardRange[] = ["1W", "1M", "3M", "1Y", "3Y"];
+
+export function Leaderboard() {
+  const [range, setRange] = useState<LeaderboardRange>("1M");
+  const { data, isLoading } = useLeaderboard(range);
+  const navigate = useNavigate();
+  const { withAuth } = useAuthGuard();
+
+  const followMutation = useFollow();
+  const unfollowMutation = useUnfollow();
+  const copyTradeMutation = useCopyTrade();
+  const uncopyTradeMutation = useStopCopyTrade();
+
+  // Copy-trade modal target (null = closed).
+  const [copyTradeTarget, setCopyTradeTarget] = useState<LeaderboardItem | null>(
+    null
+  );
+
+  const strategies = data?.strategies ?? [];
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+        <div>
+          <h2 className="text-2xl font-bold text-white">Leaderboard</h2>
+          <p className="text-sm text-gray-400 mt-1">
+            Public strategies ranked by return over the selected window.
+          </p>
+        </div>
+        <div className="flex rounded-lg bg-gray-800/80 p-0.5 gap-0.5">
+          {RANGES.map((r) => (
+            <button
+              key={r}
+              onClick={() => setRange(r)}
+              className={cn(
+                "px-3 py-1.5 rounded text-xs font-medium transition-colors",
+                range === r
+                  ? "bg-gray-600 text-white"
+                  : "text-gray-400 hover:text-gray-200"
+              )}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="animate-pulse space-y-3">
+          <div className="h-16 bg-gray-800 rounded" />
+          <div className="h-16 bg-gray-800 rounded" />
+          <div className="h-16 bg-gray-800 rounded" />
+        </div>
+      ) : strategies.length === 0 ? (
+        <div className="text-center py-20 text-gray-500">
+          <p className="text-lg">No public strategies yet</p>
+          <p className="text-sm mt-2 max-w-md mx-auto">
+            Strategies appear here once their owner makes them public. Publish one
+            of your own from its detail page to show up on the leaderboard.
+          </p>
+        </div>
+      ) : (
+        <div className="grid gap-3">
+          {strategies.map((s, i) => (
+            <LeaderboardRow
+              key={s.strategyId}
+              rank={i + 1}
+              strategy={s}
+              onOpen={() => navigate(`/view/${s.strategyId}`)}
+              onFollow={() =>
+                withAuth(() => followMutation.mutate(s.strategyId))
+              }
+              onUnfollow={() =>
+                withAuth(() => unfollowMutation.mutate(s.strategyId))
+              }
+              onCopyTrade={() => withAuth(() => setCopyTradeTarget(s))}
+              onStopCopyTrade={() =>
+                withAuth(() => uncopyTradeMutation.mutate(s.strategyId))
+              }
+            />
+          ))}
+        </div>
+      )}
+
+      {copyTradeTarget && (
+        <CopyTradeModal
+          name={
+            copyTradeTarget.strategyName ||
+            copyTradeTarget.strategyId.slice(0, 20)
+          }
+          onCancel={() => setCopyTradeTarget(null)}
+          onConfirm={(allocation) => {
+            copyTradeMutation.mutate({
+              id: copyTradeTarget.strategyId,
+              allocation,
+            });
+            setCopyTradeTarget(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function LeaderboardRow({
+  rank,
+  strategy: s,
+  onOpen,
+  onFollow,
+  onUnfollow,
+  onCopyTrade,
+  onStopCopyTrade,
+}: {
+  rank: number;
+  strategy: LeaderboardItem;
+  onOpen: () => void;
+  onFollow: () => void;
+  onUnfollow: () => void;
+  onCopyTrade: () => void;
+  onStopCopyTrade: () => void;
+}) {
+  const rangeColor =
+    s.rangeReturnPct != null
+      ? s.rangeReturnPct >= 0
+        ? "text-green-400"
+        : "text-red-400"
+      : "text-gray-500";
+
+  // Stop row-navigation when clicking an action button.
+  const stop = (fn: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    fn();
+  };
+
+  return (
+    <div
+      onClick={onOpen}
+      className="bg-gray-900 border border-gray-800 rounded-xl p-4 hover:border-gray-700 transition-colors cursor-pointer flex items-center gap-4"
+    >
+      <div className="w-8 text-center text-lg font-bold text-gray-500 flex-shrink-0">
+        {rank}
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <h3 className="text-white font-medium truncate">
+            {s.strategyName || s.strategyId.slice(0, 20)}
+          </h3>
+          <span
+            className={cn(
+              "text-xs px-2 py-0.5 rounded-full",
+              s.status === "running"
+                ? "bg-green-500/10 text-green-400"
+                : "bg-gray-700 text-gray-400"
+            )}
+          >
+            {s.status}
+          </span>
+        </div>
+        <div className="mt-1 flex items-center gap-4 text-xs text-gray-500 flex-wrap">
+          {s.exchangeId && <span>{s.exchangeId}</span>}
+          {s.modelId && <span>{s.modelId}</span>}
+          <span>
+            Since inception:{" "}
+            <span
+              className={cn(
+                s.totalPnlPct != null && s.totalPnlPct >= 0
+                  ? "text-green-500"
+                  : "text-red-500"
+              )}
+            >
+              {formatPct(s.totalPnlPct)}
+            </span>
+          </span>
+        </div>
+      </div>
+
+      <div className="text-right flex-shrink-0">
+        <div className={cn("text-xl font-bold", rangeColor)}>
+          {formatPct(s.rangeReturnPct)}
+        </div>
+        <div className="text-xs text-gray-500">range return</div>
+      </div>
+
+      <div className="flex gap-2 ml-2 flex-shrink-0">
+        {s.isFollowing ? (
+          <button
+            onClick={stop(onUnfollow)}
+            className="text-xs px-3 py-1.5 rounded-lg bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 transition-colors"
+          >
+            Following
+          </button>
+        ) : (
+          <button
+            onClick={stop(onFollow)}
+            className="text-xs px-3 py-1.5 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+          >
+            Follow
+          </button>
+        )}
+        {s.isCopyTrading ? (
+          <button
+            onClick={stop(onStopCopyTrade)}
+            className="text-xs px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition-colors"
+          >
+            Copy-trading
+          </button>
+        ) : (
+          <button
+            onClick={stop(onCopyTrade)}
+            className="text-xs px-3 py-1.5 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+          >
+            Copy-trade
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CopyTradeModal({
+  name,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  onCancel: () => void;
+  onConfirm: (allocation: number) => void;
+}) {
+  const [value, setValue] = useState("");
+  const parsed = Number(value);
+  const valid = value.trim() !== "" && Number.isFinite(parsed) && parsed > 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-sm"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-lg font-semibold text-white mb-1">Copy-trade strategy</h3>
+        <p className="text-sm text-gray-400 mb-4 truncate">{name}</p>
+        <label className="block text-xs text-gray-500 mb-1">
+          Amount to allocate (USD)
+        </label>
+        <input
+          type="number"
+          autoFocus
+          min={0}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && valid) onConfirm(parsed);
+          }}
+          placeholder="1000"
+          className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500"
+        />
+        <p className="mt-3 text-xs text-gray-500">
+          Copy-trading replicates this strategy's trades with your own capital. It
+          starts in <span className="text-amber-400/80">paper / testnet mode</span> —
+          no real orders are placed yet.
+        </p>
+        <div className="flex justify-end gap-2 mt-5">
+          <button
+            onClick={onCancel}
+            className="text-xs px-4 py-2 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => valid && onConfirm(parsed)}
+            disabled={!valid}
+            className="text-xs px-4 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-medium"
+          >
+            Copy-trade
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

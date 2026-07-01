@@ -76,6 +76,13 @@ export function Layout() {
             Dashboard
           </NavLink>
           <NavLink
+            to="/leaderboard"
+            current={location.pathname === "/leaderboard"}
+            onClick={closeSidebar}
+          >
+            Leaderboard
+          </NavLink>
+          <NavLink
             to="/strategy/create"
             current={location.pathname === "/strategy/create"}
             onClick={closeSidebar}

@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
+import { useAuthStore } from "@/stores/auth";
 import type {
   StrategyList,
   Holding,
@@ -9,6 +10,10 @@ import type {
   Prompt,
   PromptVersion,
   CreateStrategyInput,
+  DashboardResponse,
+  LeaderboardResponse,
+  LeaderboardRange,
+  RedactedView,
 } from "@/types/strategy";
 
 const KEYS = {
@@ -19,6 +24,9 @@ const KEYS = {
   performance: (id: string) => ["strategy", id, "performance"] as const,
   cycles: (id: string) => ["strategy", id, "cycles"] as const,
   prompts: ["prompts"] as const,
+  dashboard: ["dashboard"] as const,
+  leaderboard: (range: LeaderboardRange) => ["leaderboard", range] as const,
+  redacted: (id: string) => ["redacted", id] as const,
 };
 
 export function useStrategies(status?: string) {
@@ -37,6 +45,14 @@ export function usePushStatus(id: string) {
   const { data } = useStrategies();
   const s = data?.strategies.find((s) => s.strategyId === id);
   return s?.pushStatus ?? null;
+}
+
+/** Returns the live run status ("running" / "stopped" / …) for a strategy,
+ *  derived from the polled strategy list, or null until it loads. */
+export function useStrategyStatus(id: string) {
+  const { data } = useStrategies();
+  const s = data?.strategies.find((s) => s.strategyId === id);
+  return s?.status ?? null;
 }
 
 export function useStrategyPerformance(id: string) {
@@ -201,23 +217,6 @@ export function useClosePosition() {
   });
 }
 
-export function usePruneSnapshots() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ id, minValue }: { id: string; minValue: number }) => {
-      const res = await api.delete<{ deleted: number }>(
-        `/strategies/snapshots?id=${id}&min_value=${minValue}`
-      );
-      return res.data;
-    },
-    onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ["strategy", id, "equity"] });
-      qc.invalidateQueries({ queryKey: KEYS.portfolio(id) });
-      qc.invalidateQueries({ queryKey: KEYS.performance(id) });
-    },
-  });
-}
-
 export function useUpdatePrompt() {
   const qc = useQueryClient();
   return useMutation({
@@ -244,5 +243,136 @@ export function useUpdatePrompt() {
         queryKey: ["strategy", id, "performance"],
       });
     },
+  });
+}
+
+export function usePruneSnapshots() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, minValue }: { id: string; minValue: number }) => {
+      const res = await api.delete<{ deleted: number }>(
+        `/strategies/snapshots?id=${id}&min_value=${minValue}`
+      );
+      return res.data;
+    },
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["strategy", id, "equity"] });
+      qc.invalidateQueries({ queryKey: KEYS.portfolio(id) });
+      qc.invalidateQueries({ queryKey: KEYS.performance(id) });
+    },
+  });
+}
+
+// ----- Social: follow / copy-trade / leaderboard / redacted view -----
+
+/** Scoped dashboard: own + followed + copy-traded strategies. Auth-only. */
+export function useDashboard() {
+  const { isAuthenticated } = useAuthStore();
+  return useQuery({
+    queryKey: KEYS.dashboard,
+    queryFn: async () => {
+      const res = await api.get<DashboardResponse>("/strategies/dashboard");
+      return res.data;
+    },
+    enabled: isAuthenticated,
+    refetchInterval: 5000,
+  });
+}
+
+/** Leaderboard for a time window. Works logged-out; personalized when logged in. */
+export function useLeaderboard(range: LeaderboardRange) {
+  return useQuery({
+    queryKey: KEYS.leaderboard(range),
+    queryFn: async () => {
+      const res = await api.get<LeaderboardResponse>(
+        `/strategies/leaderboard?range=${range}`
+      );
+      return res.data;
+    },
+    refetchInterval: 15000,
+  });
+}
+
+/** Redacted follow-view of a strategy (no capital/sizes). */
+export function useRedactedView(id: string) {
+  return useQuery({
+    queryKey: KEYS.redacted(id),
+    queryFn: async () => {
+      const res = await api.get<RedactedView | null>(
+        `/strategies/redacted?id=${id}`
+      );
+      return res.data;
+    },
+    enabled: !!id,
+    refetchInterval: 10000,
+  });
+}
+
+// Invalidate every query that could reflect a follow/copy-trade/visibility change.
+function invalidateSocial(qc: ReturnType<typeof useQueryClient>, id?: string) {
+  qc.invalidateQueries({ queryKey: KEYS.dashboard });
+  qc.invalidateQueries({ queryKey: ["leaderboard"] });
+  if (id) qc.invalidateQueries({ queryKey: KEYS.redacted(id) });
+}
+
+export function useFollow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await api.post("/strategies/follow", { strategy_id: id });
+    },
+    onSuccess: (_, id) => invalidateSocial(qc, id),
+  });
+}
+
+export function useUnfollow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await api.delete(`/strategies/follow?strategy_id=${id}`);
+    },
+    onSuccess: (_, id) => invalidateSocial(qc, id),
+  });
+}
+
+export function useCopyTrade() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      allocation,
+    }: {
+      id: string;
+      allocation: number;
+    }) => {
+      await api.post("/strategies/copy-trade", {
+        strategy_id: id,
+        allocation,
+      });
+    },
+    onSuccess: (_, { id }) => invalidateSocial(qc, id),
+  });
+}
+
+export function useStopCopyTrade() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await api.delete(`/strategies/copy-trade?strategy_id=${id}`);
+    },
+    onSuccess: (_, id) => invalidateSocial(qc, id),
+  });
+}
+
+export function useSetVisibility() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, public: isPublic }: { id: string; public: boolean }) => {
+      await api.post("/strategies/visibility", {
+        strategy_id: id,
+        public: isPublic,
+      });
+    },
+    onSuccess: (_, { id }) => invalidateSocial(qc, id),
   });
 }

@@ -139,6 +139,86 @@ export interface CandleConfig {
   limit: number;
 }
 
+// ----- Social: follow / copy-trade / leaderboard / redacted view -----
+
+export type StrategyRelation =
+  | "own"
+  | "follow"
+  | "copytrade"
+  | "follow+copytrade";
+
+export interface DashboardItem {
+  strategyId: string;
+  strategyName: string | null;
+  status: string;
+  exchangeId: string | null;
+  modelId: string | null;
+  createdAt: string;
+  public: boolean;
+  isOwner: boolean;
+  relation: StrategyRelation;
+  totalPnlPct: number | null;
+  // Present only when isOwner
+  totalPnl?: number | null;
+  // Present when you copy-trade it
+  copyTradeAllocation?: number | null;
+}
+
+export interface DashboardResponse {
+  strategies: DashboardItem[];
+  total: number;
+}
+
+export type LeaderboardRange = "1W" | "1M" | "3M" | "1Y" | "3Y";
+
+export interface LeaderboardItem {
+  strategyId: string;
+  strategyName: string | null;
+  status: string;
+  exchangeId: string | null;
+  modelId: string | null;
+  createdAt: string;
+  public: boolean;
+  isOwner: boolean;
+  relation: StrategyRelation;
+  totalPnlPct: number | null;
+  rangeReturnPct: number | null;
+  isFollowing: boolean;
+  isCopyTrading: boolean;
+}
+
+export interface LeaderboardResponse {
+  strategies: LeaderboardItem[];
+  range: LeaderboardRange;
+  total: number;
+}
+
+export interface PerfPoint {
+  ts: number;
+  pct: number;
+}
+
+export interface RedactedPosition {
+  symbol: string;
+  direction: "LONG" | "SHORT";
+  pnlPct: number;
+}
+
+export interface RedactedView {
+  strategyId: string;
+  strategyName: string | null;
+  status: string;
+  exchangeId: string | null;
+  modelId: string | null;
+  public: boolean;
+  isOwner: boolean;
+  isFollowing: boolean;
+  isCopyTrading: boolean;
+  totalPnlPct: number | null;
+  performance: PerfPoint[];
+  positions: RedactedPosition[];
+}
+
 export interface CreateStrategyInput {
   llm_model_config: {
     provider: string;
