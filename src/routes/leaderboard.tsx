@@ -9,6 +9,7 @@ import {
 } from "@/api/strategies";
 import { formatPct, cn } from "@/lib/utils";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
+import { CopyTradeModal } from "@/components/strategy/CopyTradeModal";
 import type { LeaderboardItem, LeaderboardRange } from "@/types/strategy";
 
 const RANGES: LeaderboardRange[] = ["1W", "1M", "3M", "1Y", "3Y"];
@@ -102,11 +103,15 @@ export function Leaderboard() {
             copyTradeTarget.strategyId.slice(0, 20)
           }
           onCancel={() => setCopyTradeTarget(null)}
-          onConfirm={(allocation) => {
-            copyTradeMutation.mutate({
-              id: copyTradeTarget.strategyId,
-              allocation,
-            });
+          onConfirm={(p) => {
+            copyTradeMutation.mutate(
+              { id: copyTradeTarget.strategyId, ...p },
+              {
+                onSuccess: (data) => {
+                  if (data?.warning) alert(data.warning);
+                },
+              }
+            );
             setCopyTradeTarget(null);
           }}
         />
@@ -231,66 +236,3 @@ function LeaderboardRow({
   );
 }
 
-function CopyTradeModal({
-  name,
-  onCancel,
-  onConfirm,
-}: {
-  name: string;
-  onCancel: () => void;
-  onConfirm: (allocation: number) => void;
-}) {
-  const [value, setValue] = useState("");
-  const parsed = Number(value);
-  const valid = value.trim() !== "" && Number.isFinite(parsed) && parsed > 0;
-
-  return (
-    <div
-      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
-      onClick={onCancel}
-    >
-      <div
-        className="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-sm"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-lg font-semibold text-white mb-1">Copy-trade strategy</h3>
-        <p className="text-sm text-gray-400 mb-4 truncate">{name}</p>
-        <label className="block text-xs text-gray-500 mb-1">
-          Amount to allocate (USD)
-        </label>
-        <input
-          type="number"
-          autoFocus
-          min={0}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && valid) onConfirm(parsed);
-          }}
-          placeholder="1000"
-          className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500"
-        />
-        <p className="mt-3 text-xs text-gray-500">
-          Copy-trading replicates this strategy's trades with your own capital. It
-          starts in <span className="text-amber-400/80">paper / testnet mode</span> —
-          no real orders are placed yet.
-        </p>
-        <div className="flex justify-end gap-2 mt-5">
-          <button
-            onClick={onCancel}
-            className="text-xs px-4 py-2 rounded-lg text-gray-400 hover:text-gray-200 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={() => valid && onConfirm(parsed)}
-            disabled={!valid}
-            className="text-xs px-4 py-2 rounded-lg bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-medium"
-          >
-            Copy-trade
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
