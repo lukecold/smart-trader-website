@@ -183,6 +183,7 @@ export interface LeaderboardItem {
   relation: StrategyRelation;
   totalPnlPct: number | null;
   rangeReturnPct: number | null;
+  sparkline: number[] | null; // downsampled %-return series over the selected window
   isFollowing: boolean;
   isCopyTrading: boolean;
 }

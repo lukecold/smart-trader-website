@@ -10,6 +10,7 @@ import {
 import { formatPct, cn } from "@/lib/utils";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import { CopyTradeModal } from "@/components/strategy/CopyTradeModal";
+import { Sparkline } from "@/components/strategy/Sparkline";
 import type { LeaderboardItem, LeaderboardRange } from "@/types/strategy";
 
 const RANGES: LeaderboardRange[] = ["1W", "1M", "3M", "1Y", "3Y"];
@@ -193,11 +194,14 @@ function LeaderboardRow({
         </div>
       </div>
 
-      <div className="text-right flex-shrink-0">
-        <div className={cn("text-xl font-bold", rangeColor)}>
-          {formatPct(s.rangeReturnPct)}
+      <div className="flex items-center gap-3 flex-shrink-0">
+        <Sparkline points={s.sparkline} />
+        <div className="text-right">
+          <div className={cn("text-xl font-bold", rangeColor)}>
+            {formatPct(s.rangeReturnPct)}
+          </div>
+          <div className="text-xs text-gray-500">range return</div>
         </div>
-        <div className="text-xs text-gray-500">range return</div>
       </div>
 
       <div className="flex gap-2 ml-2 flex-shrink-0">
