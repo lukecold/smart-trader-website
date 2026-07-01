@@ -17,6 +17,7 @@ import { BacktestSection } from "@/components/strategy/BacktestSection";
 import { Markdown } from "@/components/ui/Markdown";
 import { diffLines } from "diff";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
+import { VisibilityToggle } from "@/components/strategy/VisibilityToggle";
 import type { ComposeCycle } from "@/types/strategy";
 import {
   AreaChart,
@@ -329,6 +330,9 @@ function OverviewSection({ id }: { id: string }) {
             degraded
           </span>
         )}
+        <div className="ml-auto">
+          <VisibilityToggle id={id} />
+        </div>
       </div>
 
       {/* Config row */}
