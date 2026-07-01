@@ -54,6 +54,8 @@ type RangeKey = "1W" | "MTD" | "1M" | "3M" | "YTD" | "1Y" | "ALL";
 
 const RANGES: RangeKey[] = ["1W", "MTD", "1M", "3M", "YTD", "1Y", "ALL"];
 
+const DAY_MS = 86_400_000;
+
 // Subtracts `n` months from `now` without the setMonth day-of-month overflow
 // (e.g. May 31 minus 1 month must be Apr 30, not May 1). The day is clamped to
 // the number of days in the target month.
@@ -76,22 +78,31 @@ function rangeCutoff(key: RangeKey, now: Date): number {
     case "1W":
       d.setDate(d.getDate() - 7);
       return d.getTime();
-    case "MTD":
-      return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    case "MTD": {
+      // Month-to-date, in the viewer's local calendar. But right after a month
+      // rolls over this collapses to a near-empty sliver (on the 1st it would be
+      // just the minutes since midnight), so floor the window to the last 7 days
+      // — the chart then always shows useful context and grows into a true
+      // month-to-date view as the month progresses.
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+      return Math.min(monthStart, now.getTime() - 7 * DAY_MS);
+    }
     case "1M":
       return subMonths(now, 1);
     case "3M":
       return subMonths(now, 3);
-    case "YTD":
-      return new Date(now.getFullYear(), 0, 1).getTime();
+    case "YTD": {
+      // Year-to-date, floored to the last 30 days for the same boundary reason
+      // (early January would otherwise be near-empty).
+      const yearStart = new Date(now.getFullYear(), 0, 1).getTime();
+      return Math.min(yearStart, now.getTime() - 30 * DAY_MS);
+    }
     case "1Y":
       return subMonths(now, 12);
     case "ALL":
       return Number.NEGATIVE_INFINITY;
   }
 }
-
-const DAY_MS = 86_400_000;
 
 function PerformanceSection({ id }: { id: string }) {
   const { data: points } = useEquityCurve(id);
