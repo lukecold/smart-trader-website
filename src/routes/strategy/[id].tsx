@@ -54,6 +54,27 @@ type RangeKey = "1W" | "MTD" | "1M" | "3M" | "YTD" | "1Y" | "ALL";
 
 const RANGES: RangeKey[] = ["1W", "MTD", "1M", "3M", "YTD", "1Y", "ALL"];
 
+// Persist the user's selected performance-chart range across reloads. A single
+// global key (last choice wins) — falls back to "ALL" on first-ever load or if
+// the stored value is missing/invalid.
+const RANGE_STORAGE_KEY = "smart-trader:perf-range";
+function loadStoredRange(): RangeKey {
+  try {
+    const v = localStorage.getItem(RANGE_STORAGE_KEY);
+    if (v && (RANGES as string[]).includes(v)) return v as RangeKey;
+  } catch {
+    /* localStorage unavailable — use default */
+  }
+  return "ALL";
+}
+function storeRange(r: RangeKey): void {
+  try {
+    localStorage.setItem(RANGE_STORAGE_KEY, r);
+  } catch {
+    /* ignore persistence failures */
+  }
+}
+
 const DAY_MS = 86_400_000;
 
 // Subtracts `n` months from `now` without the setMonth day-of-month overflow
@@ -78,25 +99,21 @@ function rangeCutoff(key: RangeKey, now: Date): number {
     case "1W":
       d.setDate(d.getDate() - 7);
       return d.getTime();
-    case "MTD": {
-      // Month-to-date, in the viewer's local calendar. But right after a month
-      // rolls over this collapses to a near-empty sliver (on the 1st it would be
-      // just the minutes since midnight), so floor the window to the last 7 days
-      // — the chart then always shows useful context and grows into a true
-      // month-to-date view as the month progresses.
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-      return Math.min(monthStart, now.getTime() - 7 * DAY_MS);
-    }
+    case "MTD":
+      // Month-to-date: strictly the 1st of the current month, in the viewer's
+      // local calendar. Do NOT floor to a trailing window — that made the 1st of
+      // the month resolve backwards into the previous month (e.g. Jul 1 -> Jun 24).
+      // If the data starts later than the boundary, the plotted line simply
+      // begins at the first available point (data-limited, which is acceptable).
+      return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
     case "1M":
       return subMonths(now, 1);
     case "3M":
       return subMonths(now, 3);
-    case "YTD": {
-      // Year-to-date, floored to the last 30 days for the same boundary reason
-      // (early January would otherwise be near-empty).
-      const yearStart = new Date(now.getFullYear(), 0, 1).getTime();
-      return Math.min(yearStart, now.getTime() - 30 * DAY_MS);
-    }
+    case "YTD":
+      // Year-to-date: strictly Jan 1 of the current year. Same rule as MTD — a
+      // trailing-window floor would push early-January into the previous year.
+      return new Date(now.getFullYear(), 0, 1).getTime();
     case "1Y":
       return subMonths(now, 12);
     case "ALL":
@@ -106,7 +123,12 @@ function rangeCutoff(key: RangeKey, now: Date): number {
 
 function PerformanceSection({ id }: { id: string }) {
   const { data: points } = useEquityCurve(id);
-  const [range, setRange] = useState<RangeKey>("ALL");
+  // Restore the last-selected range on load; persist every change.
+  const [range, setRangeState] = useState<RangeKey>(loadStoredRange);
+  const setRange = (r: RangeKey) => {
+    setRangeState(r);
+    storeRange(r);
+  };
 
   if (!points || points.length < 2) return null;
 
