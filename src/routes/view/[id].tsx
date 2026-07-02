@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useMemo, useState } from "react";
+import { useParams, useSearchParams, Link } from "react-router-dom";
 import {
   useRedactedView,
   useFollow,
@@ -10,7 +10,12 @@ import {
 import { formatPct, cn } from "@/lib/utils";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import { CopyTradeModal } from "@/components/strategy/CopyTradeModal";
-import type { RedactedView, PerfPoint } from "@/types/strategy";
+import {
+  RangeSelector,
+  rangeToMs,
+  isLeaderboardRange,
+} from "@/components/strategy/RangeSelector";
+import type { RedactedView, PerfPoint, LeaderboardRange } from "@/types/strategy";
 import {
   AreaChart,
   Area,
@@ -38,6 +43,20 @@ export function RedactedStrategyView() {
 function ViewBody({ id }: { id: string }) {
   const { data, isLoading } = useRedactedView(id);
 
+  // Zoom carried over from the leaderboard via ?range=, then user-selectable here.
+  // Defaults to 1M (the leaderboard default) when absent/invalid.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlRange = searchParams.get("range");
+  const [range, setRange] = useState<LeaderboardRange>(
+    isLeaderboardRange(urlRange) ? urlRange : "1M"
+  );
+  const handleRangeChange = (r: LeaderboardRange) => {
+    setRange(r);
+    const next = new URLSearchParams(searchParams);
+    next.set("range", r);
+    setSearchParams(next, { replace: true });
+  };
+
   if (isLoading) {
     return (
       <div className="animate-pulse space-y-4">
@@ -64,7 +83,11 @@ function ViewBody({ id }: { id: string }) {
   return (
     <>
       <Header view={data} id={id} />
-      <PerformanceChart points={data.performance} />
+      <PerformanceChart
+        points={data.performance}
+        range={range}
+        onRangeChange={handleRangeChange}
+      />
       <PositionsTable positions={data.positions} />
     </>
   );
@@ -194,21 +217,41 @@ function Header({ view: v, id }: { view: RedactedView; id: string }) {
   );
 }
 
-function PerformanceChart({ points }: { points: PerfPoint[] }) {
-  if (!points || points.length < 2) {
-    return (
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Performance</h3>
-        <div className="h-56 flex items-center justify-center text-sm text-gray-500">
-          Not enough performance data yet.
-        </div>
-      </div>
-    );
-  }
+// windowPerformance filters the (since-inception, normalized) series to the
+// selected zoom and re-bases it to the first point IN the window, so the chart
+// shows return over that window — matching the leaderboard's range-return
+// (repo.ReturnPct normalizes to the first snapshot >= now-duration). The series
+// carries pct only, where pct_i = (v_i/v0 - 1)*100, so v_i/v0 = 1 + pct_i/100.
+function windowPerformance(
+  points: PerfPoint[],
+  range: LeaderboardRange
+): PerfPoint[] {
+  if (!points || points.length === 0) return [];
+  const cutoff = Date.now() - rangeToMs(range);
+  const win = points.filter((p) => p.ts >= cutoff);
+  if (win.length === 0) return [];
+  const baseRatio = 1 + win[0].pct / 100;
+  if (baseRatio === 0) return win;
+  return win.map((p) => ({
+    ts: p.ts,
+    pct: ((1 + p.pct / 100) / baseRatio - 1) * 100,
+  }));
+}
 
-  const first = points[0].pct;
-  const last = points[points.length - 1].pct;
-  const isUp = last >= first;
+function PerformanceChart({
+  points,
+  range,
+  onRangeChange,
+}: {
+  points: PerfPoint[];
+  range: LeaderboardRange;
+  onRangeChange: (r: LeaderboardRange) => void;
+}) {
+  const windowed = useMemo(() => windowPerformance(points, range), [points, range]);
+  const hasData = windowed.length >= 2;
+
+  const last = hasData ? windowed[windowed.length - 1].pct : 0;
+  const isUp = last >= 0;
 
   const fmtAxis = (ts: number) =>
     new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -222,22 +265,36 @@ function PerformanceChart({ points }: { points: PerfPoint[] }) {
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-      <div className="flex items-center gap-3 mb-4">
-        <h3 className="text-lg font-semibold text-white">Performance</h3>
-        <span
-          className={cn(
-            "text-xs font-medium px-2 py-0.5 rounded-full",
-            isUp ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"
+      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+        <div className="flex items-center gap-3">
+          <h3 className="text-lg font-semibold text-white">Performance</h3>
+          {hasData && (
+            <>
+              <span
+                className={cn(
+                  "text-xs font-medium px-2 py-0.5 rounded-full",
+                  isUp
+                    ? "bg-green-500/10 text-green-400"
+                    : "bg-red-500/10 text-red-400"
+                )}
+              >
+                {formatPct(last)}
+              </span>
+              <span className="text-xs text-gray-500">return over {range}</span>
+            </>
           )}
-        >
-          {formatPct(last)}
-        </span>
-        <span className="text-xs text-gray-500">% return</span>
+        </div>
+        <RangeSelector value={range} onChange={onRangeChange} />
       </div>
+      {!hasData ? (
+        <div className="h-56 flex items-center justify-center text-sm text-gray-500">
+          Not enough performance data in this window.
+        </div>
+      ) : (
       <div className="h-56">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart
-            data={points}
+            data={windowed}
             margin={{ top: 4, right: 8, bottom: 0, left: 8 }}
           >
             <defs>
@@ -295,6 +352,7 @@ function PerformanceChart({ points }: { points: PerfPoint[] }) {
           </AreaChart>
         </ResponsiveContainer>
       </div>
+      )}
     </div>
   );
 }
