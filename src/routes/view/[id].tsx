@@ -10,12 +10,15 @@ import {
 import { formatPct, cn } from "@/lib/utils";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import { CopyTradeModal } from "@/components/strategy/CopyTradeModal";
+import { RangeSelector } from "@/components/strategy/RangeSelector";
 import {
-  RangeSelector,
+  RANGE_PARAM,
+  DEFAULT_RANGE,
   rangeToMs,
   isLeaderboardRange,
-} from "@/components/strategy/RangeSelector";
-import type { RedactedView, PerfPoint, LeaderboardRange } from "@/types/strategy";
+  type LeaderboardRange,
+} from "@/lib/ranges";
+import type { RedactedView, PerfPoint } from "@/types/strategy";
 import {
   AreaChart,
   Area,
@@ -43,17 +46,17 @@ export function RedactedStrategyView() {
 function ViewBody({ id }: { id: string }) {
   const { data, isLoading } = useRedactedView(id);
 
-  // Zoom carried over from the leaderboard via ?range=, then user-selectable here.
-  // Defaults to 1M (the leaderboard default) when absent/invalid.
+  // Zoom carried over from the leaderboard via the range param, then user-selectable
+  // here. Falls back to DEFAULT_RANGE when the param is absent/invalid.
   const [searchParams, setSearchParams] = useSearchParams();
-  const urlRange = searchParams.get("range");
+  const urlRange = searchParams.get(RANGE_PARAM);
   const [range, setRange] = useState<LeaderboardRange>(
-    isLeaderboardRange(urlRange) ? urlRange : "1M"
+    isLeaderboardRange(urlRange) ? urlRange : DEFAULT_RANGE
   );
   const handleRangeChange = (r: LeaderboardRange) => {
     setRange(r);
     const next = new URLSearchParams(searchParams);
-    next.set("range", r);
+    next.set(RANGE_PARAM, r);
     setSearchParams(next, { replace: true });
   };
 

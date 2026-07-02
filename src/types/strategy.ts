@@ -169,7 +169,11 @@ export interface DashboardResponse {
   total: number;
 }
 
-export type LeaderboardRange = "1W" | "1M" | "3M" | "1Y" | "3Y";
+// Range domain lives in @/lib/ranges (single source of truth). Imported for local
+// use below and re-exported so existing `@/types/strategy` importers keep working
+// without hardcoding the set.
+import type { LeaderboardRange } from "@/lib/ranges";
+export type { LeaderboardRange };
 
 export interface LeaderboardItem {
   strategyId: string;
