@@ -11,29 +11,14 @@ import { formatPct, cn } from "@/lib/utils";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import { CopyTradeModal } from "@/components/strategy/CopyTradeModal";
 import { Sparkline } from "@/components/strategy/Sparkline";
-import { RangeSelector, isLeaderboardRange } from "@/components/strategy/RangeSelector";
-import type { LeaderboardItem, LeaderboardRange } from "@/types/strategy";
-
-// Persist the leaderboard's selected window across reloads. Its own key — the
-// detail chart's range set differs (MTD/YTD/ALL vs 3Y) — so they don't clobber
-// each other. Falls back to "1M" on first load or an invalid/missing value.
-const RANGE_STORAGE_KEY = "smart-trader:leaderboard-range";
-function loadStoredRange(): LeaderboardRange {
-  try {
-    const v = localStorage.getItem(RANGE_STORAGE_KEY);
-    if (isLeaderboardRange(v)) return v;
-  } catch {
-    /* localStorage unavailable — use default */
-  }
-  return "1M";
-}
-function storeRange(r: LeaderboardRange): void {
-  try {
-    localStorage.setItem(RANGE_STORAGE_KEY, r);
-  } catch {
-    /* ignore persistence failures */
-  }
-}
+import { RangeSelector } from "@/components/strategy/RangeSelector";
+import {
+  RANGE_PARAM,
+  loadStoredRange,
+  storeRange,
+  type LeaderboardRange,
+} from "@/lib/ranges";
+import type { LeaderboardItem } from "@/types/strategy";
 
 export function Leaderboard() {
   // Restore the last-selected range on load; persist every change.
@@ -91,7 +76,9 @@ export function Leaderboard() {
               key={s.strategyId}
               rank={i + 1}
               strategy={s}
-              onOpen={() => navigate(`/view/${s.strategyId}?range=${range}`)}
+              onOpen={() =>
+                navigate(`/view/${s.strategyId}?${RANGE_PARAM}=${range}`)
+              }
               onFollow={() =>
                 withAuth(() => followMutation.mutate(s.strategyId))
               }

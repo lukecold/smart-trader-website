@@ -1,35 +1,9 @@
 import { cn } from "@/lib/utils";
-import type { LeaderboardRange } from "@/types/strategy";
-
-// The zoom windows shared by the leaderboard and the strategy detail chart.
-export const RANGES: LeaderboardRange[] = ["1W", "1M", "3M", "1Y", "3Y"];
-
-const DAY = 24 * 60 * 60 * 1000;
-
-// rangeToMs mirrors the backend rangeToDuration (social.go) so the client-side
-// chart window matches the leaderboard's range-return computation exactly.
-export function rangeToMs(range: LeaderboardRange): number {
-  switch (range) {
-    case "1W":
-      return 7 * DAY;
-    case "1M":
-      return 30 * DAY;
-    case "3M":
-      return 90 * DAY;
-    case "1Y":
-      return 365 * DAY;
-    case "3Y":
-      return 3 * 365 * DAY;
-  }
-}
-
-// isLeaderboardRange narrows an untrusted string (e.g. a URL param) to a valid range.
-export function isLeaderboardRange(v: string | null | undefined): v is LeaderboardRange {
-  return v != null && (RANGES as string[]).includes(v);
-}
+import { RANGES, type LeaderboardRange } from "@/lib/ranges";
 
 // RangeSelector is the segmented time-window control used by the leaderboard and
-// the strategy detail chart, so both offer the identical set of zooms.
+// the redacted-view chart. The range domain (set, default, helpers) lives in
+// @/lib/ranges — this component only renders it.
 export function RangeSelector({
   value,
   onChange,
