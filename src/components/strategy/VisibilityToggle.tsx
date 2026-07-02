@@ -15,23 +15,54 @@ export function VisibilityToggle({ id }: { id: string }) {
   if (!item || !item.isOwner) return null;
 
   const isPublic = item.public;
+  const pending = setVisibility.isPending;
+  // The mutation isn't optimistic — `isPublic` only updates once the refetch
+  // lands. While pending we already know the target (the user just flipped it),
+  // so reflect it immediately: the knob slides the moment they click, and rolls
+  // back on error when `pending` clears and `isPublic` reverts to its old value.
+  const shown = pending ? !isPublic : isPublic;
 
   return (
     <div className="flex items-center gap-2">
       <span className="text-xs text-gray-500">Visibility</span>
       <button
+        type="button"
+        role="switch"
+        aria-checked={shown}
+        aria-busy={pending}
+        aria-label={`Strategy visibility: ${shown ? "public" : "private"}`}
         onClick={() =>
           withAuth(() => setVisibility.mutate({ id, public: !isPublic }))
         }
-        disabled={setVisibility.isPending}
+        disabled={pending}
         className={cn(
-          "text-xs px-3 py-1.5 rounded-lg font-medium transition-colors disabled:opacity-50",
-          isPublic
-            ? "bg-green-500/15 text-green-400 hover:bg-green-500/25"
-            : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+          "relative inline-flex h-7 w-[84px] shrink-0 items-center rounded-full",
+          "transition-colors duration-200 ease-in-out",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/70",
+          "disabled:cursor-not-allowed disabled:opacity-60",
+          shown ? "bg-green-500" : "bg-gray-600"
         )}
       >
-        {setVisibility.isPending ? "Saving…" : isPublic ? "Public" : "Private"}
+        {/* State label, pinned to the side opposite the knob. */}
+        <span
+          aria-hidden="true"
+          className={cn(
+            "absolute inset-y-0 flex items-center text-[11px] font-semibold",
+            "transition-colors duration-200",
+            shown ? "left-3 text-white" : "right-3 text-gray-100"
+          )}
+        >
+          {shown ? "Public" : "Private"}
+        </span>
+        {/* Sliding knob. */}
+        <span
+          aria-hidden="true"
+          className={cn(
+            "absolute left-0.5 h-6 w-6 rounded-full bg-white shadow-sm",
+            "transform transition-transform duration-200 ease-in-out motion-reduce:transition-none",
+            shown ? "translate-x-[56px]" : "translate-x-0"
+          )}
+        />
       </button>
       <InfoTooltip />
     </div>
