@@ -11,11 +11,37 @@ import { formatPct, cn } from "@/lib/utils";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import { CopyTradeModal } from "@/components/strategy/CopyTradeModal";
 import { Sparkline } from "@/components/strategy/Sparkline";
-import { RangeSelector } from "@/components/strategy/RangeSelector";
+import { RangeSelector, isLeaderboardRange } from "@/components/strategy/RangeSelector";
 import type { LeaderboardItem, LeaderboardRange } from "@/types/strategy";
 
+// Persist the leaderboard's selected window across reloads. Its own key — the
+// detail chart's range set differs (MTD/YTD/ALL vs 3Y) — so they don't clobber
+// each other. Falls back to "1M" on first load or an invalid/missing value.
+const RANGE_STORAGE_KEY = "smart-trader:leaderboard-range";
+function loadStoredRange(): LeaderboardRange {
+  try {
+    const v = localStorage.getItem(RANGE_STORAGE_KEY);
+    if (isLeaderboardRange(v)) return v;
+  } catch {
+    /* localStorage unavailable — use default */
+  }
+  return "1M";
+}
+function storeRange(r: LeaderboardRange): void {
+  try {
+    localStorage.setItem(RANGE_STORAGE_KEY, r);
+  } catch {
+    /* ignore persistence failures */
+  }
+}
+
 export function Leaderboard() {
-  const [range, setRange] = useState<LeaderboardRange>("1M");
+  // Restore the last-selected range on load; persist every change.
+  const [range, setRangeState] = useState<LeaderboardRange>(loadStoredRange);
+  const setRange = (r: LeaderboardRange) => {
+    setRangeState(r);
+    storeRange(r);
+  };
   const { data, isLoading } = useLeaderboard(range);
   const navigate = useNavigate();
   const { withAuth } = useAuthGuard();
