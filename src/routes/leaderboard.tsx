@@ -9,9 +9,8 @@ import {
 } from "@/api/strategies";
 import { formatPct, cn } from "@/lib/utils";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
+import { RangeSelector } from "@/components/strategy/RangeSelector";
 import type { LeaderboardItem, LeaderboardRange } from "@/types/strategy";
-
-const RANGES: LeaderboardRange[] = ["1W", "1M", "3M", "1Y", "3Y"];
 
 export function Leaderboard() {
   const [range, setRange] = useState<LeaderboardRange>("1M");
@@ -40,22 +39,7 @@ export function Leaderboard() {
             Public strategies ranked by return over the selected window.
           </p>
         </div>
-        <div className="flex rounded-lg bg-gray-800/80 p-0.5 gap-0.5">
-          {RANGES.map((r) => (
-            <button
-              key={r}
-              onClick={() => setRange(r)}
-              className={cn(
-                "px-3 py-1.5 rounded text-xs font-medium transition-colors",
-                range === r
-                  ? "bg-gray-600 text-white"
-                  : "text-gray-400 hover:text-gray-200"
-              )}
-            >
-              {r}
-            </button>
-          ))}
-        </div>
+        <RangeSelector value={range} onChange={setRange} />
       </div>
 
       {isLoading ? (
@@ -79,7 +63,7 @@ export function Leaderboard() {
               key={s.strategyId}
               rank={i + 1}
               strategy={s}
-              onOpen={() => navigate(`/view/${s.strategyId}`)}
+              onOpen={() => navigate(`/view/${s.strategyId}?range=${range}`)}
               onFollow={() =>
                 withAuth(() => followMutation.mutate(s.strategyId))
               }
