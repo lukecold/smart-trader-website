@@ -5,14 +5,10 @@ import { Leaderboard } from "@/routes/leaderboard";
 import { RedactedStrategyView } from "@/routes/view/[id]";
 import { StrategyDetail } from "@/routes/strategy/[id]";
 import { CreateStrategy } from "@/routes/strategy/create";
-import { VerifyAuth } from "@/routes/auth/verify";
 
 export default function App() {
   return (
     <Routes>
-      {/* Magic-link verification — full-page, no sidebar */}
-      <Route path="/auth/verify" element={<VerifyAuth />} />
-
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
         <Route path="/leaderboard" element={<Leaderboard />} />

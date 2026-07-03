@@ -42,6 +42,7 @@ export function useGoogleSignIn(
   onCredential: (idToken: string) => void
 ) {
   const [clientId, setClientId] = useState<string | null>(null);
+  const [configLoaded, setConfigLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const buttonRef = useRef<HTMLDivElement>(null);
 
@@ -49,7 +50,8 @@ export function useGoogleSignIn(
   const onCredRef = useRef(onCredential);
   onCredRef.current = onCredential;
 
-  // Load the public auth config once to discover the client ID.
+  // Load the public auth config once to discover the client ID. `configLoaded`
+  // lets callers distinguish "still fetching" from "Google not configured".
   useEffect(() => {
     let cancelled = false;
     fetchAuthConfig()
@@ -58,6 +60,9 @@ export function useGoogleSignIn(
       })
       .catch(() => {
         if (!cancelled) setClientId(null);
+      })
+      .finally(() => {
+        if (!cancelled) setConfigLoaded(true);
       });
     return () => {
       cancelled = true;
@@ -103,5 +108,5 @@ export function useGoogleSignIn(
     };
   }, [enabled, clientId]);
 
-  return { clientId, buttonRef, error };
+  return { clientId, configLoaded, buttonRef, error };
 }
