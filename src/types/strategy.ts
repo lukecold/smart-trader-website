@@ -238,6 +238,10 @@ export interface CreateStrategyInput {
     trading_mode?: string;
     market_type?: string;
     margin_mode?: string;
+    // IBKR routing (no API key/secret — the account/gateway session is the credential).
+    account_id?: string;
+    gateway_url?: string;
+    base_currency?: string;
   };
   trading_config: {
     strategy_name: string;
