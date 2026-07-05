@@ -10,6 +10,8 @@ import {
   useUpdatePrompt,
   usePushStatus,
   useStrategyStatus,
+  useStrategies,
+  useRenameStrategy,
 } from "@/api/strategies";
 import { formatCurrency, formatPct, formatNumber, cn } from "@/lib/utils";
 import { PromptSection, InlineDiff, SplitDiff } from "@/components/strategy/PromptSection";
@@ -38,6 +40,7 @@ export function StrategyDetail() {
       <Link to="/" className="text-sm text-gray-500 hover:text-gray-300">
         &larr; Back to Dashboard
       </Link>
+      <DetailHeader id={id} />
       <OverviewSection id={id} />
       <PerformanceSection id={id} />
       <HoldingsSection id={id} />
@@ -45,6 +48,100 @@ export function StrategyDetail() {
       <BacktestSectionWrapper id={id} />
       <TradeHistorySection id={id} />
       <ChatSection id={id} />
+    </div>
+  );
+}
+
+// ----- Header: strategy name + inline rename (owner, 30-day cooldown) -----
+
+function DetailHeader({ id }: { id: string }) {
+  const { data } = useStrategies();
+  const strat = data?.strategies.find((s) => s.strategyId === id);
+  const name = strat?.strategyName ?? "";
+  const rename = useRenameStrategy();
+
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [error, setError] = useState("");
+
+  const startEdit = () => {
+    setValue(name);
+    setError("");
+    setEditing(true);
+  };
+
+  const cancel = () => {
+    setEditing(false);
+    setError("");
+  };
+
+  const save = () => {
+    const next = value.trim();
+    if (!next || next === name) {
+      cancel();
+      return;
+    }
+    setError("");
+    rename.mutate(
+      { id, name: next },
+      {
+        onSuccess: () => cancel(),
+        onError: (e) => setError((e as Error).message),
+      }
+    );
+  };
+
+  return (
+    <div>
+      {editing ? (
+        <div className="flex items-center gap-2 flex-wrap">
+          <input
+            autoFocus
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") save();
+              if (e.key === "Escape") cancel();
+            }}
+            maxLength={100}
+            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-2xl font-bold outline-none focus:border-blue-500 min-w-[260px]"
+          />
+          <button
+            onClick={save}
+            disabled={rename.isPending}
+            className="text-sm px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40"
+          >
+            {rename.isPending ? "Saving…" : "Save"}
+          </button>
+          <button
+            onClick={cancel}
+            className="text-sm px-3 py-1.5 rounded-lg bg-gray-700 text-gray-200 hover:bg-gray-600"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3 flex-wrap">
+          <h1 className="text-2xl font-bold text-white truncate">
+            {name || id.slice(0, 20)}
+          </h1>
+          {strat && (
+            <button
+              onClick={startEdit}
+              title="Rename (allowed once every 30 days)"
+              className="text-xs text-gray-500 hover:text-gray-300 border border-gray-700 hover:border-gray-500 rounded-lg px-2 py-1 transition-colors"
+            >
+              ✎ Rename
+            </button>
+          )}
+        </div>
+      )}
+      {error && <p className="text-xs text-red-400 mt-1.5">{error}</p>}
+      {editing && !error && (
+        <p className="text-xs text-gray-500 mt-1.5">
+          The name can be changed once every 30 days.
+        </p>
+      )}
     </div>
   );
 }
