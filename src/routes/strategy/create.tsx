@@ -13,9 +13,32 @@ const DEFAULT_CANDLE_CONFIGS: CandleConfig[] = [
 
 const INTERVAL_OPTIONS = ["1m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w"];
 
-const POPULAR_SYMBOLS = [
+// Brokers the backend can route to (internal/exchange/factory.go). Crypto runs the
+// virtual/live toggle; equity brokers run *live against a paper account by default*
+// (there is no equity paper-simulation path — virtual mode uses Binance crypto data).
+// Credentials/routing for equity brokers come from the server env, not this form.
+type AssetClass = "crypto" | "equity";
+interface BrokerMeta {
+  id: string;
+  label: string;
+  asset: AssetClass;
+  group: string;
+}
+const BROKERS: BrokerMeta[] = [
+  { id: "binance", label: "Binance", asset: "crypto", group: "Crypto" },
+  { id: "ibkr", label: "Interactive Brokers", asset: "equity", group: "Equities (US)" },
+  { id: "alpaca", label: "Alpaca", asset: "equity", group: "Equities (US)" },
+];
+const assetClassOf = (id: string): AssetClass =>
+  BROKERS.find((b) => b.id === id)?.asset ?? "crypto";
+
+const POPULAR_SYMBOLS_CRYPTO = [
   "BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT",
   "XRP-USDT", "DOGE-USDT", "ADA-USDT", "AVAX-USDT",
+];
+const POPULAR_SYMBOLS_EQUITY = [
+  "AAPL", "MSFT", "NVDA", "AMZN",
+  "GOOGL", "META", "TSLA", "SPY",
 ];
 
 const MODEL_PRESETS: Record<string, string[]> = {
@@ -60,6 +83,7 @@ export function CreateStrategy() {
   // Symbol tag state
   const [symbols, setSymbols] = useState<string[]>(["BTC-USDT"]);
   const [symbolInput, setSymbolInput] = useState("");
+  const [symbolError, setSymbolError] = useState("");
   const symbolInputRef = useRef<HTMLInputElement>(null);
 
   // Candle config state
@@ -72,19 +96,31 @@ export function CreateStrategy() {
   // Backtest panel
   const [showBacktest, setShowBacktest] = useState(false);
 
-  // Reset balance state when switching away from live mode
+  // Reset the balance-fetch UI state when leaving live mode. Capital resets are owned
+  // by handleExchangeChange (broker switch) and the Trading Mode toggle below — not here
+  // — so a value the user typed for an equity strategy survives a broker switch.
   useEffect(() => {
     if (form.tradingMode !== "live") {
       setBalanceFetched(false);
       setBalanceError("");
-      setForm((prev) => ({ ...prev, initialCapital: 10000 }));
     }
   }, [form.tradingMode]);
 
   // Symbol helpers
   const addSymbol = (sym: string) => {
     const s = sym.trim().toUpperCase().replace(/\s/g, "");
-    if (s && !symbols.includes(s)) {
+    if (!s) {
+      setSymbolInput("");
+      return;
+    }
+    // Asset-class guard: equity brokers take plain tickers (AAPL), not crypto pairs
+    // (BTC-USDT). Block the obvious mismatch so it never reaches the backend.
+    if (assetClassOf(form.exchangeId) === "equity" && /[-/:]/.test(s)) {
+      setSymbolError(`"${s}" looks like a crypto pair — equity brokers use plain tickers (e.g. AAPL).`);
+      return;
+    }
+    setSymbolError("");
+    if (!symbols.includes(s)) {
       setSymbols((prev) => [...prev, s]);
     }
     setSymbolInput("");
@@ -168,17 +204,21 @@ export function CreateStrategy() {
       },
       exchange_config: {
         exchange_id: form.exchangeId || undefined,
-        api_key: form.exchangeApiKey || undefined,
-        secret_key: form.exchangeSecretKey || undefined,
-        trading_mode: opts?.tradingMode ?? form.tradingMode,
-        market_type: form.marketType,
-        margin_mode: form.marginMode,
+        // Keys are only entered/sent for a live crypto exchange. Equity brokers get
+        // credentials + routing (account id, gateway url) injected from the server env.
+        api_key: isCryptoLive ? form.exchangeApiKey || undefined : undefined,
+        secret_key: isCryptoLive ? form.exchangeSecretKey || undefined : undefined,
+        // Equities are always live (real broker API to a paper account by default).
+        trading_mode: isEquity ? "live" : opts?.tradingMode ?? form.tradingMode,
+        // Crypto-perp-only knobs — omitted for equities.
+        market_type: isCrypto ? form.marketType : undefined,
+        margin_mode: isCrypto ? form.marginMode : undefined,
       },
       trading_config: {
         strategy_name: form.strategyName,
         strategy_type: form.strategyType,
         initial_capital: form.initialCapital,
-        max_leverage: form.maxLeverage,
+        max_leverage: isEquity ? 1 : form.maxLeverage,
         max_positions: form.maxPositions,
         decide_interval: form.decideInterval,
         symbols: symbols,
@@ -201,7 +241,42 @@ export function CreateStrategy() {
   const update = (field: string, value: string | number) =>
     setForm((prev) => ({ ...prev, [field]: value }));
 
+  // Broker → asset class. Crypto keeps the virtual/live toggle; equity brokers always
+  // run "live" (real broker API to a paper account by default), have no crypto market/
+  // margin fields, and get their credentials/routing from the server env — so the user
+  // only picks the broker + symbols, never enters keys here.
+  const assetClass = assetClassOf(form.exchangeId);
+  const isEquity = assetClass === "equity";
+  const isCrypto = !isEquity;
   const isLive = form.tradingMode === "live";
+  const isCryptoLive = isCrypto && isLive; // the only path that needs user keys + balance fetch
+  const popularSymbols = isEquity ? POPULAR_SYMBOLS_EQUITY : POPULAR_SYMBOLS_CRYPTO;
+
+  const handleExchangeChange = (id: string) => {
+    const nextAsset = assetClassOf(id);
+    const prevAsset = assetClassOf(form.exchangeId);
+    setForm((prev) => ({
+      ...prev,
+      exchangeId: id,
+      // Equity brokers are live-only (paper account by default); crypto defaults to virtual.
+      tradingMode: nextAsset === "equity" ? "live" : "virtual",
+      // Clear crypto keys when moving to an equity broker (server-provided creds there).
+      exchangeApiKey: nextAsset === "equity" ? "" : prev.exchangeApiKey,
+      exchangeSecretKey: nextAsset === "equity" ? "" : prev.exchangeSecretKey,
+      // Don't carry a Binance-fetched balance into a manual-capital equity form.
+      initialCapital: nextAsset === "equity" ? 10000 : prev.initialCapital,
+    }));
+    setBalanceFetched(false);
+    setBalanceError("");
+    setSymbolError("");
+    // The backtest panel runs on Binance crypto paper data — close it if it was open
+    // when moving to an equity broker (its symbols/config no longer apply).
+    if (nextAsset === "equity") setShowBacktest(false);
+    // BTC-USDT and AAPL aren't interchangeable — reset presets when the asset class flips.
+    if (nextAsset !== prevAsset) {
+      setSymbols(nextAsset === "equity" ? ["AAPL"] : ["BTC-USDT"]);
+    }
+  };
 
   return (
     <div className="max-w-2xl">
@@ -233,7 +308,7 @@ export function CreateStrategy() {
             <span className="text-sm text-gray-400 mb-2 block">Symbols</span>
             {/* Popular presets */}
             <div className="flex flex-wrap gap-1.5 mb-2">
-              {POPULAR_SYMBOLS.map((sym) => (
+              {popularSymbols.map((sym) => (
                 <button
                   key={sym}
                   type="button"
@@ -279,6 +354,7 @@ export function CreateStrategy() {
               />
             </div>
             <p className="text-xs text-gray-600 mt-1">Click presets or type and press Enter / comma</p>
+            {symbolError && <p className="text-xs text-red-400 mt-1">{symbolError}</p>}
           </div>
         </Section>
 
@@ -324,27 +400,64 @@ export function CreateStrategy() {
           </Field>
         </Section>
 
-        {/* Exchange Config */}
-        <Section title="Exchange">
-          <Field label="Trading Mode">
+        {/* Exchange / Broker Config */}
+        <Section title="Broker / Exchange">
+          <Field label="Broker">
             <select
-              value={form.tradingMode}
-              onChange={(e) => update("tradingMode", e.target.value)}
+              value={form.exchangeId}
+              onChange={(e) => handleExchangeChange(e.target.value)}
             >
-              <option value="virtual">Virtual (Paper)</option>
-              <option value="live">Live</option>
+              {Array.from(new Set(BROKERS.map((b) => b.group))).map((group) => (
+                <optgroup key={group} label={group}>
+                  {BROKERS.filter((b) => b.group === group).map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
             </select>
           </Field>
-          {isLive && (
+
+          {isCrypto && (
+            <Field label="Trading Mode">
+              <select
+                value={form.tradingMode}
+                onChange={(e) => {
+                  const mode = e.target.value;
+                  update("tradingMode", mode);
+                  // Leaving live clears the exchange-fetched balance back to the manual default.
+                  if (mode !== "live") update("initialCapital", 10000);
+                }}
+              >
+                <option value="virtual">Virtual (Paper)</option>
+                <option value="live">Live</option>
+              </select>
+            </Field>
+          )}
+
+          {isEquity && (
+            <div className="text-xs text-gray-400 bg-gray-800/60 border border-gray-700 rounded-lg p-3 space-y-1.5">
+              <p>
+                Runs{" "}
+                <span className="text-gray-200 font-medium">
+                  live against your broker's paper account
+                </span>{" "}
+                by default — real market data, simulated fills. Equities have no separate
+                "virtual" mode.
+              </p>
+              <p>
+                Broker credentials and routing are configured on the server — you don't
+                enter keys here. Real-money trading stays disabled until an operator arms it.
+              </p>
+              <p className="text-gray-500">
+                Use plain tickers (e.g. AAPL, MSFT). US market hours apply.
+              </p>
+            </div>
+          )}
+
+          {isCryptoLive && (
             <>
-              <Field label="Exchange">
-                <select
-                  value={form.exchangeId}
-                  onChange={(e) => update("exchangeId", e.target.value)}
-                >
-                  <option value="binance">Binance</option>
-                </select>
-              </Field>
               <Field label="API Key">
                 <input
                   type="password"
@@ -413,28 +526,38 @@ export function CreateStrategy() {
         {/* Trading Parameters */}
         <Section title="Trading Parameters">
           <div className="grid grid-cols-2 gap-4">
-            <Field label={isLive ? "Initial Capital (from exchange)" : "Initial Capital (USDT)"}>
+            <Field
+              label={
+                isCryptoLive
+                  ? "Initial Capital (from exchange)"
+                  : isEquity
+                  ? "Initial Capital (USD)"
+                  : "Initial Capital (USDT)"
+              }
+            >
               <input
                 type="number"
                 value={form.initialCapital}
                 onChange={(e) => {
-                  if (!isLive) update("initialCapital", Number(e.target.value));
+                  if (!isCryptoLive) update("initialCapital", Number(e.target.value));
                 }}
-                readOnly={isLive}
+                readOnly={isCryptoLive}
                 required
                 min={1}
-                className={isLive ? "opacity-60 cursor-not-allowed" : ""}
+                className={isCryptoLive ? "opacity-60 cursor-not-allowed" : ""}
               />
             </Field>
-            <Field label="Max Leverage">
-              <input
-                type="number"
-                value={form.maxLeverage}
-                onChange={(e) => update("maxLeverage", Number(e.target.value))}
-                min={1}
-                max={125}
-              />
-            </Field>
+            {isCrypto && (
+              <Field label="Max Leverage">
+                <input
+                  type="number"
+                  value={form.maxLeverage}
+                  onChange={(e) => update("maxLeverage", Number(e.target.value))}
+                  min={1}
+                  max={125}
+                />
+              </Field>
+            )}
             <Field label="Max Positions">
               <input
                 type="number"
@@ -452,9 +575,9 @@ export function CreateStrategy() {
               />
             </Field>
           </div>
-          {isLive && !balanceFetched && (
+          {isCryptoLive && !balanceFetched && (
             <p className="text-xs text-yellow-500">
-              ↑ Click "Fetch Balance" in the Exchange section to sync your initial capital from the exchange.
+              ↑ Click "Fetch Balance" in the Broker section to sync your initial capital from the exchange.
             </p>
           )}
         </Section>
@@ -539,14 +662,16 @@ export function CreateStrategy() {
         </Section>
 
         <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={handleBacktestFirst}
-            disabled={symbols.length === 0}
-            className="flex-1 py-3 bg-gray-700 text-gray-200 rounded-lg hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
-          >
-            Backtest First
-          </button>
+          {isCrypto && (
+            <button
+              type="button"
+              onClick={handleBacktestFirst}
+              disabled={symbols.length === 0}
+              className="flex-1 py-3 bg-gray-700 text-gray-200 rounded-lg hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
+            >
+              Backtest First
+            </button>
+          )}
           <button
             type="submit"
             disabled={createMutation.isPending || symbols.length === 0}
