@@ -246,6 +246,26 @@ export function useUpdatePrompt() {
   });
 }
 
+// Rename a strategy (owner only). The backend enforces a 30-day cooldown between
+// renames. NOTE: the API returns business errors as HTTP 200 with a non-zero
+// envelope `code` + `msg` (cooldown / not-owner / invalid), so we must inspect the
+// envelope rather than the HTTP status to surface the reason to the user.
+export function useRenameStrategy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, name }: { id: string; name: string }) => {
+      const res = await api.post<null>("/strategies/rename", { id, name });
+      if (res.code !== 0) {
+        throw new Error(res.msg || "Failed to rename strategy");
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.list });
+      qc.invalidateQueries({ queryKey: KEYS.dashboard });
+    },
+  });
+}
+
 export function usePruneSnapshots() {
   const qc = useQueryClient();
   return useMutation({
