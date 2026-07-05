@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { useCreateStrategy, usePrompts, useFetchBalance } from "@/api/strategies";
+import { useCreateStrategy, usePrompts, useFetchBalance, useProviderModels } from "@/api/strategies";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import type { CandleConfig, CreateStrategyInput } from "@/types/strategy";
 import { StandaloneBacktestPanel } from "@/components/strategy/StandaloneBacktestPanel";
@@ -106,6 +106,30 @@ export function CreateStrategy() {
 
   // Backtest panel
   const [showBacktest, setShowBacktest] = useState(false);
+
+  // Model discovery: pull the provider's available models (server caches 24h, re-pulls
+  // on select after that). Falls back to the hardcoded presets while loading / on error.
+  const { data: fetchedModels } = useProviderModels(form.provider);
+  const modelOptions =
+    fetchedModels && fetchedModels.length > 0
+      ? fetchedModels
+      : MODEL_PRESETS[form.provider] ?? [];
+  // Tracks whether the user has picked a model since the last provider change, so the
+  // fetched list can set a sensible default without clobbering a deliberate choice.
+  const modelEditedRef = useRef(false);
+
+  // When the fetched model list for the current provider arrives, default to its first
+  // model — unless the user already chose one, or the current value is already valid.
+  useEffect(() => {
+    if (
+      !modelEditedRef.current &&
+      fetchedModels &&
+      fetchedModels.length > 0 &&
+      !fetchedModels.includes(form.modelId)
+    ) {
+      setForm((prev) => ({ ...prev, modelId: fetchedModels[0] }));
+    }
+  }, [fetchedModels]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset the balance-fetch UI state when leaving live mode. Capital resets are owned
   // by handleExchangeChange (broker switch) and the Trading Mode toggle below — not here
@@ -394,6 +418,8 @@ export function CreateStrategy() {
               value={form.provider}
               onChange={(e) => {
                 const prov = e.target.value;
+                // New provider → the fetched-model default can take over again.
+                modelEditedRef.current = false;
                 update("provider", prov);
                 const defaults = MODEL_PRESETS[prov];
                 if (defaults?.[0]) update("modelId", defaults[0]);
@@ -409,12 +435,15 @@ export function CreateStrategy() {
             <input
               list="model-presets"
               value={form.modelId}
-              onChange={(e) => update("modelId", e.target.value)}
+              onChange={(e) => {
+                modelEditedRef.current = true;
+                update("modelId", e.target.value);
+              }}
               required
               placeholder="deepseek-v4-pro"
             />
             <datalist id="model-presets">
-              {(MODEL_PRESETS[form.provider] ?? []).map((m) => (
+              {modelOptions.map((m) => (
                 <option key={m} value={m} />
               ))}
             </datalist>

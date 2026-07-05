@@ -246,6 +246,25 @@ export function useUpdatePrompt() {
   });
 }
 
+// Available LLM models for a provider, discovered from the provider's /models
+// endpoint. The backend caches per provider for 24h and re-pulls on the first
+// request after that, so selecting a provider transparently gets a fresh list at
+// most once a day. Falls back to a hardcoded list server-side if a provider has no
+// key / is unreachable, so this never returns empty for a known provider.
+export function useProviderModels(provider: string) {
+  return useQuery({
+    queryKey: ["models", provider],
+    queryFn: async () => {
+      const res = await api.get<{ provider: string; models: string[] }>(
+        `/strategies/models?provider=${encodeURIComponent(provider)}`
+      );
+      return res.data?.models ?? [];
+    },
+    enabled: !!provider,
+    staleTime: 24 * 60 * 60 * 1000, // server owns the 24h freshness; don't refetch within a session
+  });
+}
+
 // Rename a strategy (owner only). The backend enforces a 30-day cooldown between
 // renames. NOTE: the API returns business errors as HTTP 200 with a non-zero
 // envelope `code` + `msg` (cooldown / not-owner / invalid), so we must inspect the
