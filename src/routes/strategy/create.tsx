@@ -42,7 +42,7 @@ const POPULAR_SYMBOLS_EQUITY = [
 ];
 
 const MODEL_PRESETS: Record<string, string[]> = {
-  deepseek: ["deepseek-chat", "deepseek-reasoner"],
+  deepseek: ["deepseek-v4-pro", "deepseek-v4-flash"],
   openai: ["gpt-4o", "gpt-4o-mini", "o3-mini", "o1-mini"],
   openrouter: [
     "deepseek/deepseek-r1",
@@ -51,6 +51,14 @@ const MODEL_PRESETS: Record<string, string[]> = {
     "google/gemini-2.0-flash-001",
   ],
   google: ["gemini-2.0-flash-001", "gemini-2.0-flash-thinking-exp", "gemini-1.5-pro"],
+};
+
+// Decision-interval unit → seconds. decide_interval is sent to the backend in seconds.
+const INTERVAL_UNITS: Record<string, { label: string; seconds: number }> = {
+  sec: { label: "Seconds", seconds: 1 },
+  min: { label: "Minutes", seconds: 60 },
+  hour: { label: "Hours", seconds: 3600 },
+  day: { label: "Days", seconds: 86400 },
 };
 
 export function CreateStrategy() {
@@ -64,18 +72,21 @@ export function CreateStrategy() {
     strategyName: "",
     strategyType: "PromptBasedStrategy",
     provider: "deepseek",
-    modelId: "deepseek-chat",
+    modelId: "deepseek-v4-pro",
     apiKey: "",
     exchangeId: "binance",
     exchangeApiKey: "",
     exchangeSecretKey: "",
+    accountId: "",
+    gatewayUrl: "",
     tradingMode: "virtual",
     marketType: "swap",
     marginMode: "cross",
     initialCapital: 10000,
     maxLeverage: 5,
     maxPositions: 2,
-    decideInterval: 60,
+    decideInterval: 1,
+    decideIntervalUnit: "min",
     promptText: "",
     templateId: "",
   });
@@ -182,6 +193,14 @@ export function CreateStrategy() {
       alert("Please add at least one symbol.");
       return;
     }
+    if (isAlpaca && (!form.exchangeApiKey || !form.exchangeSecretKey)) {
+      alert("Please enter your Alpaca API key and secret.");
+      return;
+    }
+    if (isIBKR && !form.accountId) {
+      alert("Please enter your IBKR account ID.");
+      return;
+    }
 
     withAuth(() => doCreate());
   };
@@ -204,10 +223,13 @@ export function CreateStrategy() {
       },
       exchange_config: {
         exchange_id: form.exchangeId || undefined,
-        // Keys are only entered/sent for a live crypto exchange. Equity brokers get
-        // credentials + routing (account id, gateway url) injected from the server env.
-        api_key: isCryptoLive ? form.exchangeApiKey || undefined : undefined,
-        secret_key: isCryptoLive ? form.exchangeSecretKey || undefined : undefined,
+        // The user supplies each broker's own credentials: live crypto + Alpaca use an
+        // API key + secret; IBKR uses an account id (+ optional gateway url).
+        api_key: needsKeySecret ? form.exchangeApiKey || undefined : undefined,
+        secret_key: needsKeySecret ? form.exchangeSecretKey || undefined : undefined,
+        account_id: isIBKR ? form.accountId || undefined : undefined,
+        gateway_url: isIBKR ? form.gatewayUrl || undefined : undefined,
+        base_currency: isEquity ? "USD" : undefined,
         // Equities are always live (real broker API to a paper account by default).
         trading_mode: isEquity ? "live" : opts?.tradingMode ?? form.tradingMode,
         // Crypto-perp-only knobs — omitted for equities.
@@ -220,7 +242,7 @@ export function CreateStrategy() {
         initial_capital: form.initialCapital,
         max_leverage: isEquity ? 1 : form.maxLeverage,
         max_positions: form.maxPositions,
-        decide_interval: form.decideInterval,
+        decide_interval: decideSeconds,
         symbols: symbols,
         candle_configs: candleConfigs,
         prompt_text: (opts?.promptText ?? form.promptText) || undefined,
@@ -242,15 +264,20 @@ export function CreateStrategy() {
     setForm((prev) => ({ ...prev, [field]: value }));
 
   // Broker → asset class. Crypto keeps the virtual/live toggle; equity brokers always
-  // run "live" (real broker API to a paper account by default), have no crypto market/
-  // margin fields, and get their credentials/routing from the server env — so the user
-  // only picks the broker + symbols, never enters keys here.
+  // run "live" (real broker API to a paper account by default) and have no crypto
+  // market/margin fields. Each broker's credentials are entered by the user here:
+  // Alpaca uses an API key + secret; IBKR uses an account id (+ gateway url).
   const assetClass = assetClassOf(form.exchangeId);
   const isEquity = assetClass === "equity";
   const isCrypto = !isEquity;
+  const isAlpaca = form.exchangeId === "alpaca";
+  const isIBKR = form.exchangeId === "ibkr";
   const isLive = form.tradingMode === "live";
-  const isCryptoLive = isCrypto && isLive; // the only path that needs user keys + balance fetch
+  const isCryptoLive = isCrypto && isLive; // live crypto needs key/secret + balance fetch
+  const needsKeySecret = isCryptoLive || isAlpaca; // brokers that take an API key + secret
   const popularSymbols = isEquity ? POPULAR_SYMBOLS_EQUITY : POPULAR_SYMBOLS_CRYPTO;
+  const decideSeconds =
+    form.decideInterval * (INTERVAL_UNITS[form.decideIntervalUnit]?.seconds ?? 1);
 
   const handleExchangeChange = (id: string) => {
     const nextAsset = assetClassOf(id);
@@ -260,9 +287,11 @@ export function CreateStrategy() {
       exchangeId: id,
       // Equity brokers are live-only (paper account by default); crypto defaults to virtual.
       tradingMode: nextAsset === "equity" ? "live" : "virtual",
-      // Clear crypto keys when moving to an equity broker (server-provided creds there).
-      exchangeApiKey: nextAsset === "equity" ? "" : prev.exchangeApiKey,
-      exchangeSecretKey: nextAsset === "equity" ? "" : prev.exchangeSecretKey,
+      // Different broker = different credentials — never carry one broker's keys to another.
+      exchangeApiKey: "",
+      exchangeSecretKey: "",
+      accountId: "",
+      gatewayUrl: "",
       // Don't carry a Binance-fetched balance into a manual-capital equity form.
       initialCapital: nextAsset === "equity" ? 10000 : prev.initialCapital,
     }));
@@ -382,7 +411,7 @@ export function CreateStrategy() {
               value={form.modelId}
               onChange={(e) => update("modelId", e.target.value)}
               required
-              placeholder="deepseek-chat"
+              placeholder="deepseek-v4-pro"
             />
             <datalist id="model-presets">
               {(MODEL_PRESETS[form.provider] ?? []).map((m) => (
@@ -437,23 +466,69 @@ export function CreateStrategy() {
           )}
 
           {isEquity && (
-            <div className="text-xs text-gray-400 bg-gray-800/60 border border-gray-700 rounded-lg p-3 space-y-1.5">
-              <p>
-                Runs{" "}
-                <span className="text-gray-200 font-medium">
-                  live against your broker's paper account
-                </span>{" "}
-                by default — real market data, simulated fills. Equities have no separate
-                "virtual" mode.
-              </p>
-              <p>
-                Broker credentials and routing are configured on the server — you don't
-                enter keys here. Real-money trading stays disabled until an operator arms it.
-              </p>
-              <p className="text-gray-500">
-                Use plain tickers (e.g. AAPL, MSFT). US market hours apply.
-              </p>
-            </div>
+            <>
+              <div className="text-xs text-gray-400 bg-gray-800/60 border border-gray-700 rounded-lg p-3 space-y-1.5">
+                <p>
+                  Runs{" "}
+                  <span className="text-gray-200 font-medium">
+                    live against your broker's paper account
+                  </span>{" "}
+                  by default — real market data, simulated fills. Equities have no separate
+                  "virtual" mode.
+                </p>
+                <p>Enter your own broker credentials below — they are used only for this strategy.</p>
+                <p className="text-gray-500">
+                  Use plain tickers (e.g. AAPL, MSFT). US market hours apply.
+                </p>
+              </div>
+
+              {isAlpaca && (
+                <>
+                  <Field label="Alpaca API Key">
+                    <input
+                      type="password"
+                      value={form.exchangeApiKey}
+                      onChange={(e) => update("exchangeApiKey", e.target.value)}
+                      placeholder="PK… (paper) or AK… (live)"
+                      autoComplete="off"
+                    />
+                  </Field>
+                  <Field label="Alpaca Secret Key">
+                    <input
+                      type="password"
+                      value={form.exchangeSecretKey}
+                      onChange={(e) => update("exchangeSecretKey", e.target.value)}
+                      autoComplete="off"
+                    />
+                  </Field>
+                </>
+              )}
+
+              {isIBKR && (
+                <>
+                  <Field label="IBKR Account ID">
+                    <input
+                      value={form.accountId}
+                      onChange={(e) => update("accountId", e.target.value)}
+                      placeholder="DU1234567 (paper) or U1234567 (live)"
+                      autoComplete="off"
+                    />
+                  </Field>
+                  <Field label="IBKR Gateway URL (optional)">
+                    <input
+                      value={form.gatewayUrl}
+                      onChange={(e) => update("gatewayUrl", e.target.value)}
+                      placeholder="tws://host:4002 — blank = managed gateway"
+                      autoComplete="off"
+                    />
+                  </Field>
+                  <p className="text-xs text-gray-500 -mt-2">
+                    IBKR authenticates through a gateway session, not an API key. Leave the
+                    gateway URL blank to route through the managed paper gateway.
+                  </p>
+                </>
+              )}
+            </>
           )}
 
           {isCryptoLive && (
@@ -566,13 +641,28 @@ export function CreateStrategy() {
                 min={1}
               />
             </Field>
-            <Field label="Decision Interval (sec)">
-              <input
-                type="number"
-                value={form.decideInterval}
-                onChange={(e) => update("decideInterval", Number(e.target.value))}
-                min={10}
-              />
+            <Field label="Decision Interval">
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  value={form.decideInterval}
+                  onChange={(e) => update("decideInterval", Number(e.target.value))}
+                  min={form.decideIntervalUnit === "sec" ? 10 : 1}
+                  className="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-blue-500"
+                />
+                <select
+                  value={form.decideIntervalUnit}
+                  onChange={(e) => update("decideIntervalUnit", e.target.value)}
+                  className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-2 text-white text-sm outline-none focus:border-blue-500"
+                >
+                  {Object.entries(INTERVAL_UNITS).map(([k, u]) => (
+                    <option key={k} value={k}>{u.label}</option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-xs text-gray-600 mt-1">
+                = {decideSeconds.toLocaleString()}s per decision cycle
+              </p>
             </Field>
           </div>
           {isCryptoLive && !balanceFetched && (
