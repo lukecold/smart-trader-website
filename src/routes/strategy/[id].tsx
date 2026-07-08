@@ -20,6 +20,7 @@ import { Markdown } from "@/components/ui/Markdown";
 import { diffLines } from "diff";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import { VisibilityToggle } from "@/components/strategy/VisibilityToggle";
+import { SettingsSection } from "@/components/strategy/SettingsSection";
 import type { ComposeCycle } from "@/types/strategy";
 import {
   AreaChart,
@@ -431,6 +432,8 @@ function OverviewSection({ id }: { id: string }) {
           <VisibilityToggle id={id} />
         </div>
       </div>
+
+      <SettingsSection id={id} />
 
       {/* Config row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">

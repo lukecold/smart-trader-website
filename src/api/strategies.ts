@@ -428,3 +428,60 @@ export function useSetVisibility() {
     onSuccess: (_, { id }) => invalidateSocial(qc, id),
   });
 }
+
+// --- User-editable strategy config (owner only) ---
+
+// NOTE: the api client camelizes response keys; request bodies stay snake_case.
+export interface StrategyConfigView {
+  maxLeverage: number | null;
+  decideIntervalSeconds: number | null;
+  modelId: string | null;
+  modelProvider: string | null;
+  exchangeId: string | null;
+  tradingMode: string | null;
+  symbols: string[] | null;
+  initialCapital: number | null;
+}
+
+export interface UpdateStrategyConfigInput {
+  id: string;
+  max_leverage?: number;
+  decide_interval_seconds?: number;
+  model_id?: string;
+  model_provider?: string;
+}
+
+// Whitelisted editable config (cadence, leverage, model). 403s for non-owners —
+// callers should gate on ownership (useDashboard isOwner) before enabling this.
+export function useStrategyConfig(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["strategy", id, "config"],
+    queryFn: async () => {
+      const res = await api.get<StrategyConfigView>(
+        `/strategies/config?id=${encodeURIComponent(id)}`
+      );
+      if (res.code !== 0) throw new Error(res.msg || "Failed to load config");
+      return res.data;
+    },
+    enabled,
+  });
+}
+
+// Edits persist AND hot-apply to the live strategy (cadence within one old
+// interval, model on the next LLM cycle, leverage immediately). Business errors
+// arrive as HTTP 200 with a non-zero envelope code.
+export function useUpdateStrategyConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: UpdateStrategyConfigInput) => {
+      const res = await api.post<StrategyConfigView>("/strategies/update-config", input);
+      if (res.code !== 0) throw new Error(res.msg || "Failed to update config");
+      return res.data;
+    },
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["strategy", id, "config"] });
+      qc.invalidateQueries({ queryKey: KEYS.performance(id) });
+      qc.invalidateQueries({ queryKey: KEYS.list });
+    },
+  });
+}
