@@ -271,6 +271,10 @@ export function CreateStrategy() {
         candle_configs: candleConfigs,
         prompt_text: (opts?.promptText ?? form.promptText) || undefined,
         template_id: form.templateId || undefined,
+        // Explicit asset class chosen for this strategy. The backend materializes the
+        // typed instrument universe from it at creation (persisting structured
+        // instruments) instead of inferring it from the exchange at runtime.
+        asset_class: assetClass,
       },
     };
 
@@ -329,6 +333,23 @@ export function CreateStrategy() {
     if (nextAsset !== prevAsset) {
       setSymbols(nextAsset === "equity" ? ["AAPL"] : ["BTC-USDT"]);
     }
+  };
+
+  // Asset class is the explicit, primary choice. Each class maps to a sensible default
+  // broker (crypto→Binance, equity→Alpaca — the working brokers, not the dormant IBKR
+  // skeleton); picking a class switches the exchange to that default so the
+  // exchange/asset pairing can never become inconsistent. When brokers grow to span
+  // multiple classes this can filter the broker list instead.
+  const handleAssetClassChange = (next: AssetClass) => {
+    if (next === assetClassOf(form.exchangeId)) return;
+    const preferred: Record<AssetClass, string> = {
+      crypto: "binance",
+      equity: "alpaca",
+    };
+    const target =
+      BROKERS.find((b) => b.id === preferred[next]) ??
+      BROKERS.find((b) => b.asset === next);
+    if (target) handleExchangeChange(target.id);
   };
 
   return (
@@ -460,6 +481,18 @@ export function CreateStrategy() {
 
         {/* Exchange / Broker Config */}
         <Section title="Broker / Exchange">
+          <Field label="Asset Class">
+            <select
+              value={assetClass}
+              onChange={(e) =>
+                handleAssetClassChange(e.target.value as AssetClass)
+              }
+            >
+              <option value="crypto">Crypto</option>
+              <option value="equity">Equity (US)</option>
+            </select>
+          </Field>
+
           <Field label="Broker">
             <select
               value={form.exchangeId}
