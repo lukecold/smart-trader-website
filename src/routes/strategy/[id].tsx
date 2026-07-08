@@ -441,10 +441,7 @@ function OverviewSection({ id }: { id: string }) {
         <Stat label="Initial Capital" value={formatCurrency(perf.initialCapital)} />
         <Stat label="ROI" value={formatPct(perf.returnRatePct)} color={roiColor} />
         <Stat label="Exchange" value={perf.exchangeId || "-"} />
-        <Stat label="Provider" value={perf.llmProvider || "-"} />
-        <Stat label="Model" value={perf.llmModelId || "-"} />
         <Stat label="Mode" value={perf.tradingMode || "-"} />
-        <Stat label="Max Leverage" value={perf.maxLeverage ? `${perf.maxLeverage}x` : "-"} />
       </div>
 
       {perf.symbols && perf.symbols.length > 0 && (
