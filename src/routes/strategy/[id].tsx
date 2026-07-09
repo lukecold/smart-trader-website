@@ -20,6 +20,7 @@ import { Markdown } from "@/components/ui/Markdown";
 import { diffLines } from "diff";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import { VisibilityToggle } from "@/components/strategy/VisibilityToggle";
+import { SettingsSection } from "@/components/strategy/SettingsSection";
 import type { ComposeCycle } from "@/types/strategy";
 import {
   AreaChart,
@@ -432,16 +433,14 @@ function OverviewSection({ id }: { id: string }) {
         </div>
       </div>
 
+      <SettingsSection id={id} />
+
       {/* Config row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <Stat label="Strategy" value={perf.strategyType || "-"} />
         <Stat label="Initial Capital" value={formatCurrency(perf.initialCapital)} />
         <Stat label="ROI" value={formatPct(perf.returnRatePct)} color={roiColor} />
         <Stat label="Exchange" value={perf.exchangeId || "-"} />
-        <Stat label="Provider" value={perf.llmProvider || "-"} />
-        <Stat label="Model" value={perf.llmModelId || "-"} />
         <Stat label="Mode" value={perf.tradingMode || "-"} />
-        <Stat label="Max Leverage" value={perf.maxLeverage ? `${perf.maxLeverage}x` : "-"} />
       </div>
 
       {perf.symbols && perf.symbols.length > 0 && (
