@@ -437,7 +437,6 @@ function OverviewSection({ id }: { id: string }) {
 
       {/* Config row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <Stat label="Strategy" value={perf.strategyType || "-"} />
         <Stat label="Initial Capital" value={formatCurrency(perf.initialCapital)} />
         <Stat label="ROI" value={formatPct(perf.returnRatePct)} color={roiColor} />
         <Stat label="Exchange" value={perf.exchangeId || "-"} />
