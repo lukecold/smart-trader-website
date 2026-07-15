@@ -21,6 +21,7 @@ import { diffLines } from "diff";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import { VisibilityToggle } from "@/components/strategy/VisibilityToggle";
 import { SettingsSection } from "@/components/strategy/SettingsSection";
+import { TradingRulesSection } from "@/components/strategy/TradingRulesSection";
 import type { ComposeCycle } from "@/types/strategy";
 import {
   AreaChart,
@@ -434,6 +435,8 @@ function OverviewSection({ id }: { id: string }) {
       </div>
 
       <SettingsSection id={id} />
+
+      <TradingRulesSection id={id} />
 
       {/* Config row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">

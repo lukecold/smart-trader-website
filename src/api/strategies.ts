@@ -432,15 +432,70 @@ export function useSetVisibility() {
 // --- User-editable strategy config (owner only) ---
 
 // NOTE: the api client camelizes response keys; request bodies stay snake_case.
+
+// A named ticker group with its own holdings caps (fractions of equity; 0 = uncapped).
+// The categorization is manual: a ticker is "high volatility" iff it's listed here.
+export interface SymbolGroupView {
+  name: string;
+  symbols: string[];
+  perSymbolCap: number; // max in ONE ticker of this group, as a fraction of equity
+  combinedCap: number; // max across ALL tickers of this group
+}
+
+// The read-only engine rules, at their EFFECTIVE values (defaults merged with any
+// per-strategy overrides). Surfaced for visibility only — not editable in this release.
+export interface EngineRules {
+  bounceGateEnabled: boolean;
+  bounceGatePriceVsEma20Pct: number;
+  bounceGateRecoveryPct: number;
+  trendBand: number;
+  trendSlopeMin: number;
+  trendSlopeLookback: number;
+  trendConfirmCycles: number;
+  stopTriggerEnabled: boolean;
+  minStopDistancePct: number;
+  trailLockPct: number;
+  trailExitEnabled: boolean;
+  trailActivatePct: number;
+  trailAtrMult: number;
+  trailDistPct: number;
+  trailDistMaxPct: number;
+  backstopTpPct: number;
+  reversalExitEnabled: boolean;
+  reversalScaleOutPct: number;
+  reversalRemainderCycles: number;
+  decisionGateEnabled: boolean;
+  llmPrefilterEnabled: boolean;
+  srEnabled: boolean;
+  srClusterTolAtr: number;
+  srResNearPct: number;
+  gatePnlBandPct: number;
+  gateHeartbeatCycles: number;
+}
+
 export interface StrategyConfigView {
   maxLeverage: number | null;
   decideIntervalSeconds: number | null;
   modelId: string | null;
   modelProvider: string | null;
+  symbols: string[] | null;
+  symbolGroups: SymbolGroupView[] | null;
+  // read-only structural + rules
   exchangeId: string | null;
   tradingMode: string | null;
-  symbols: string[] | null;
   initialCapital: number | null;
+  maxPositions: number | null;
+  capFactor: number | null;
+  strategyType: string | null;
+  rules: EngineRules | null;
+}
+
+// Request bodies stay snake_case (the client only camelizes responses).
+export interface SymbolGroupInput {
+  name: string;
+  symbols: string[];
+  per_symbol_cap: number;
+  combined_cap: number;
 }
 
 export interface UpdateStrategyConfigInput {
@@ -449,6 +504,8 @@ export interface UpdateStrategyConfigInput {
   decide_interval_seconds?: number;
   model_id?: string;
   model_provider?: string;
+  symbols?: string[];
+  symbol_groups?: SymbolGroupInput[];
 }
 
 // Whitelisted editable config (cadence, leverage, model). 403s for non-owners —
