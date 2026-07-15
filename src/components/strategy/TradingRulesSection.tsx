@@ -186,10 +186,14 @@ export function TradingRulesSection({ id }: { id: string }) {
   const [editing, setEditing] = useState(false);
   const [symbols, setSymbols] = useState<string[]>([]);
   const [groups, setGroups] = useState<EditGroup[]>([]);
-  const [initial, setInitial] = useState<{ symbols: string[]; groups: EditGroup[] }>({
-    symbols: [],
-    groups: [],
-  });
+  const [emaFast, setEmaFast] = useState("");
+  const [emaSlow, setEmaSlow] = useState("");
+  const [initial, setInitial] = useState<{
+    symbols: string[];
+    groups: EditGroup[];
+    emaFast: string;
+    emaSlow: string;
+  }>({ symbols: [], groups: [], emaFast: "", emaSlow: "" });
   const [error, setError] = useState("");
 
   if (!isOwner || !cfg) return null;
@@ -197,9 +201,13 @@ export function TradingRulesSection({ id }: { id: string }) {
   const startEdit = () => {
     const seedSymbols = cfg.symbols ?? [];
     const seedGroups = (cfg.symbolGroups ?? []).map(toEditGroup);
+    const seedFast = String(cfg.trendEmaFast ?? 20);
+    const seedSlow = String(cfg.trendEmaSlow ?? 50);
     setSymbols(seedSymbols);
     setGroups(seedGroups);
-    setInitial({ symbols: seedSymbols, groups: seedGroups });
+    setEmaFast(seedFast);
+    setEmaSlow(seedSlow);
+    setInitial({ symbols: seedSymbols, groups: seedGroups, emaFast: seedFast, emaSlow: seedSlow });
     setError("");
     setEditing(true);
   };
@@ -263,12 +271,35 @@ export function TradingRulesSection({ id }: { id: string }) {
       outGroups.push({ name, symbols: gsyms, per_symbol_cap: per, combined_cap: comb });
     }
 
-    // Only send what actually changed (either change restarts the strategy, so avoid a
+    // Trend EMA periods: bounds + fast<slow, mirroring the backend validation.
+    const fastN = Number(emaFast);
+    const slowN = Number(emaSlow);
+    if (!Number.isInteger(fastN) || fastN < 2 || fastN > 400) {
+      setError("Trend EMA fast must be a whole number between 2 and 400.");
+      return;
+    }
+    if (!Number.isInteger(slowN) || slowN < 2 || slowN > 400) {
+      setError("Trend EMA slow must be a whole number between 2 and 400.");
+      return;
+    }
+    if (fastN >= slowN) {
+      setError("Trend EMA fast must be less than slow.");
+      return;
+    }
+
+    // Only send what actually changed (any of these restarts the strategy, so avoid a
     // needless reload when nothing did).
     const input: UpdateStrategyConfigInput = { id };
     if (JSON.stringify(symbols) !== JSON.stringify(initial.symbols)) input.symbols = syms;
     if (JSON.stringify(groups) !== JSON.stringify(initial.groups)) input.symbol_groups = outGroups;
-    if (input.symbols === undefined && input.symbol_groups === undefined) {
+    if (emaFast !== initial.emaFast) input.trend_ema_fast = fastN;
+    if (emaSlow !== initial.emaSlow) input.trend_ema_slow = slowN;
+    if (
+      input.symbols === undefined &&
+      input.symbol_groups === undefined &&
+      input.trend_ema_fast === undefined &&
+      input.trend_ema_slow === undefined
+    ) {
       setEditing(false);
       return;
     }
@@ -330,6 +361,12 @@ export function TradingRulesSection({ id }: { id: string }) {
                   {s}
                 </span>
               ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-gray-500 mb-1">Trend signal</div>
+            <div className="text-sm font-medium text-gray-200">
+              EMA {cfg.trendEmaFast ?? 20} / {cfg.trendEmaSlow ?? 50} cross
             </div>
           </div>
         </div>
@@ -408,6 +445,39 @@ export function TradingRulesSection({ id }: { id: string }) {
             </div>
           </div>
 
+          <div>
+            <div className="text-xs text-gray-500 mb-1.5">Trend signal (EMA cross)</div>
+            <div className="flex gap-2">
+              <label className="flex-1 block">
+                <span className="text-[11px] text-gray-500">Fast period</span>
+                <input
+                  type="number"
+                  min={2}
+                  max={400}
+                  value={emaFast}
+                  onChange={(e) => setEmaFast(e.target.value)}
+                  className={`mt-1 w-full ${inputCls}`}
+                />
+              </label>
+              <label className="flex-1 block">
+                <span className="text-[11px] text-gray-500">Slow period</span>
+                <input
+                  type="number"
+                  min={2}
+                  max={400}
+                  value={emaSlow}
+                  onChange={(e) => setEmaSlow(e.target.value)}
+                  className={`mt-1 w-full ${inputCls}`}
+                />
+              </label>
+            </div>
+            <p className="text-[11px] text-gray-600 mt-1">
+              Drives the daily trend label, bounce gate and soft S/R. The 20/50 default is
+              backtest-calibrated — a faster pair flips direction more often. Paper-test before
+              changing on a live strategy.
+            </p>
+          </div>
+
           <div className="flex items-center gap-3 flex-wrap">
             <button
               type="button"
@@ -427,7 +497,7 @@ export function TradingRulesSection({ id }: { id: string }) {
             >
               Cancel
             </button>
-            <span className="text-[11px] text-gray-500">changing symbols or groups restarts the strategy to apply</span>
+            <span className="text-[11px] text-gray-500">changing symbols, groups or the trend EMAs restarts the strategy to apply</span>
           </div>
           {error && <p className="text-xs text-red-400">{error}</p>}
         </div>

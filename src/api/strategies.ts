@@ -480,6 +480,10 @@ export interface StrategyConfigView {
   modelProvider: string | null;
   symbols: string[] | null;
   symbolGroups: SymbolGroupView[] | null;
+  // Trend-signal EMA periods (effective values; defaults 20/50). Editable, but
+  // calibrated — the backend enforces fast < slow and 2..400 bounds.
+  trendEmaFast: number | null;
+  trendEmaSlow: number | null;
   // read-only structural + rules
   exchangeId: string | null;
   tradingMode: string | null;
@@ -506,6 +510,8 @@ export interface UpdateStrategyConfigInput {
   model_provider?: string;
   symbols?: string[];
   symbol_groups?: SymbolGroupInput[];
+  trend_ema_fast?: number;
+  trend_ema_slow?: number;
 }
 
 // Whitelisted editable config (cadence, leverage, model). 403s for non-owners —
