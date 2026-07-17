@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { useState } from "react";
 import {
   useDashboard,
   useStopStrategy,
@@ -11,6 +12,7 @@ import { formatCurrency, formatPct, timeAgo, cn } from "@/lib/utils";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import { useAuthStore } from "@/stores/auth";
 import { useAuthModalStore } from "@/stores/authModal";
+import { ReplicateModal } from "@/components/strategy/ReplicateModal";
 import type { DashboardItem, StrategyRelation } from "@/types/strategy";
 
 const RELATION_LABEL: Record<StrategyRelation, string> = {
@@ -176,6 +178,7 @@ function OwnCard({
   onRestart: () => void;
 }) {
   const isRunning = s.status === "running";
+  const [replicating, setReplicating] = useState(false);
   const pnlColor =
     s.totalPnl != null
       ? s.totalPnl >= 0
@@ -255,6 +258,13 @@ function OwnCard({
             </button>
           )}
           <button
+            onClick={() => setReplicating(true)}
+            title="Clone this strategy with a different name, model or trading mode"
+            className="text-xs px-3 py-1.5 rounded-lg bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors"
+          >
+            Replicate
+          </button>
+          <button
             onClick={onDelete}
             className="text-xs px-3 py-1.5 rounded-lg bg-gray-700 text-gray-400 hover:bg-gray-600 transition-colors"
           >
@@ -262,6 +272,13 @@ function OwnCard({
           </button>
         </div>
       </div>
+      {replicating && (
+        <ReplicateModal
+          strategyId={s.strategyId}
+          strategyName={s.strategyName || s.strategyId.slice(0, 20)}
+          onClose={() => setReplicating(false)}
+        />
+      )}
     </div>
   );
 }

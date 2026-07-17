@@ -129,6 +129,42 @@ export function useCreateStrategy() {
   });
 }
 
+// Replicate an owned strategy into a new one (owner only). The backend copies
+// the FULL stored config — prompt text, risk config, candle configs, symbols —
+// and applies the overrides, so the replica behaves exactly like the source
+// until edited. Classic use: clone a live strategy into "virtual" (paper) mode
+// on a different model to A/B-test it. The replica starts running immediately.
+// Business errors arrive as HTTP 200 with a non-zero envelope code.
+export interface ReplicateStrategyInput {
+  id: string;
+  strategy_name?: string;
+  provider?: string;
+  model_id?: string;
+  api_key?: string;
+  trading_mode?: "live" | "virtual";
+  initial_capital?: number;
+}
+
+export function useReplicateStrategy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: ReplicateStrategyInput) => {
+      const res = await api.post<{ strategyId: string }>(
+        "/strategies/replicate",
+        input
+      );
+      if (res.code !== 0) {
+        throw new Error(res.msg || "Failed to replicate strategy");
+      }
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.list });
+      qc.invalidateQueries({ queryKey: KEYS.dashboard });
+    },
+  });
+}
+
 export function useFetchBalance() {
   return useMutation({
     mutationFn: async (payload: {
@@ -144,6 +180,53 @@ export function useFetchBalance() {
       );
       return res.data;
     },
+  });
+}
+
+// The permission set Binance has recorded for an API key, camelized from the
+// backend's /strategies/validate-credentials response.
+export interface BinanceApiRestrictions {
+  createTime: number;
+  enableFutures: boolean;
+  enableMargin: boolean;
+  enableReading: boolean;
+  enableSpotAndMarginTrading: boolean;
+  enableWithdrawals: boolean;
+  ipRestrict: boolean;
+}
+
+export function useValidateBinanceCredentials() {
+  return useMutation({
+    mutationFn: async (payload: {
+      exchange_id: string;
+      api_key: string;
+      secret_key: string;
+    }) => {
+      const res = await api.post<BinanceApiRestrictions>(
+        "/strategies/validate-credentials",
+        payload
+      );
+      if (res.code !== 0) throw new Error(res.msg || "Validation failed");
+      return res.data;
+    },
+  });
+}
+
+// Static context for the Binance onboarding wizard: the IP users must
+// whitelist on their API key, plus Binance deep links. Only fetched while the
+// wizard is mounted; the values change at most on redeploy.
+export function useBinanceOnboardingInfo() {
+  return useQuery({
+    queryKey: ["onboarding", "binance"],
+    queryFn: async () => {
+      const res = await api.get<{
+        apiManagementUrl: string;
+        registerUrl: string;
+        whitelistIp: string;
+      }>("/onboarding/binance");
+      return res.data;
+    },
+    staleTime: 10 * 60 * 1000,
   });
 }
 
@@ -426,5 +509,125 @@ export function useSetVisibility() {
       });
     },
     onSuccess: (_, { id }) => invalidateSocial(qc, id),
+  });
+}
+
+// --- User-editable strategy config (owner only) ---
+
+// NOTE: the api client camelizes response keys; request bodies stay snake_case.
+
+// A named ticker group with its own holdings caps (fractions of equity; 0 = uncapped).
+// The categorization is manual: a ticker is "high volatility" iff it's listed here.
+export interface SymbolGroupView {
+  name: string;
+  symbols: string[];
+  perSymbolCap: number; // max in ONE ticker of this group, as a fraction of equity
+  combinedCap: number; // max across ALL tickers of this group
+}
+
+// The read-only engine rules, at their EFFECTIVE values (defaults merged with any
+// per-strategy overrides). Surfaced for visibility only — not editable in this release.
+export interface EngineRules {
+  bounceGateEnabled: boolean;
+  bounceGatePriceVsEma20Pct: number;
+  bounceGateRecoveryPct: number;
+  trendBand: number;
+  trendSlopeMin: number;
+  trendSlopeLookback: number;
+  trendConfirmCycles: number;
+  stopTriggerEnabled: boolean;
+  minStopDistancePct: number;
+  trailLockPct: number;
+  trailExitEnabled: boolean;
+  trailActivatePct: number;
+  trailAtrMult: number;
+  trailDistPct: number;
+  trailDistMaxPct: number;
+  backstopTpPct: number;
+  reversalExitEnabled: boolean;
+  reversalScaleOutPct: number;
+  reversalRemainderCycles: number;
+  decisionGateEnabled: boolean;
+  llmPrefilterEnabled: boolean;
+  srEnabled: boolean;
+  srClusterTolAtr: number;
+  srResNearPct: number;
+  gatePnlBandPct: number;
+  gateHeartbeatCycles: number;
+}
+
+export interface StrategyConfigView {
+  maxLeverage: number | null;
+  decideIntervalSeconds: number | null;
+  modelId: string | null;
+  modelProvider: string | null;
+  symbols: string[] | null;
+  symbolGroups: SymbolGroupView[] | null;
+  // Trend-signal EMA periods (effective values; defaults 20/50). Editable, but
+  // calibrated — the backend enforces fast < slow and 2..400 bounds.
+  trendEmaFast: number | null;
+  trendEmaSlow: number | null;
+  // read-only structural + rules
+  exchangeId: string | null;
+  tradingMode: string | null;
+  initialCapital: number | null;
+  maxPositions: number | null;
+  capFactor: number | null;
+  strategyType: string | null;
+  rules: EngineRules | null;
+}
+
+// Request bodies stay snake_case (the client only camelizes responses).
+export interface SymbolGroupInput {
+  name: string;
+  symbols: string[];
+  per_symbol_cap: number;
+  combined_cap: number;
+}
+
+export interface UpdateStrategyConfigInput {
+  id: string;
+  max_leverage?: number;
+  decide_interval_seconds?: number;
+  model_id?: string;
+  model_provider?: string;
+  symbols?: string[];
+  symbol_groups?: SymbolGroupInput[];
+  trend_ema_fast?: number;
+  trend_ema_slow?: number;
+}
+
+// Whitelisted editable config (cadence, leverage, model). 403s for non-owners —
+// callers should gate on ownership (useDashboard isOwner) before enabling this.
+export function useStrategyConfig(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["strategy", id, "config"],
+    queryFn: async () => {
+      const res = await api.get<StrategyConfigView>(
+        `/strategies/config?id=${encodeURIComponent(id)}`
+      );
+      if (res.code !== 0) throw new Error(res.msg || "Failed to load config");
+      return res.data;
+    },
+    enabled,
+  });
+}
+
+// Edits persist AND hot-apply to the live strategy (cadence within one old
+// interval, model on the next LLM cycle, leverage immediately). Business errors
+// arrive as HTTP 200 with a non-zero envelope code.
+export function useUpdateStrategyConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: UpdateStrategyConfigInput) => {
+      const res = await api.post<StrategyConfigView>("/strategies/update-config", input);
+      if (res.code !== 0) throw new Error(res.msg || "Failed to update config");
+      return res.data;
+    },
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["strategy", id, "config"] });
+      qc.invalidateQueries({ queryKey: KEYS.performance(id) });
+      qc.invalidateQueries({ queryKey: KEYS.list });
+    },
   });
 }
