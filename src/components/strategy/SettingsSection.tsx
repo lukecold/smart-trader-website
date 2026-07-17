@@ -7,12 +7,12 @@ import {
 } from "@/api/strategies";
 
 // Owner-only strategy settings: decision frequency, max leverage, LLM
-// provider/model, LLM API key, Discord notification webhook. Read-only by
-// default; the ✎ Edit button reveals the form.
-// Saved edits hot-apply to the live strategy (no restart): cadence on the loop's
-// next tick, model/key on the next LLM cycle, leverage immediately. Secret
-// fields (key/webhook) are write-only — the server reports presence booleans,
-// never the values.
+// provider/model + api key, and the trade-notification channel (Discord /
+// Slack / off). Read-only by default; the ✎ Edit button reveals the form.
+// Saved edits hot-apply to the live strategy (no restart): cadence on the
+// loop's next tick, model/key on the next LLM cycle, leverage immediately.
+// Secret fields (LLM key, Slack token) are write-only — the server shows them
+// masked; the Discord webhook is the owner's own channel URL and is shown.
 
 // Decision-interval unit → seconds (mirrors the create page).
 const INTERVAL_UNITS: Record<string, { label: string; seconds: number }> = {
@@ -67,8 +67,10 @@ export function SettingsSection({ id }: { id: string }) {
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [webhook, setWebhook] = useState("");
-  const [clearWebhook, setClearWebhook] = useState(false);
+  const [notifChannel, setNotifChannel] = useState("");
+  const [notifWebhook, setNotifWebhook] = useState("");
+  const [notifToken, setNotifToken] = useState("");
+  const [notifTarget, setNotifTarget] = useState("");
   const [error, setError] = useState("");
 
   // Model discovery for the provider currently selected in the form (hook must run
@@ -79,6 +81,7 @@ export function SettingsSection({ id }: { id: string }) {
 
   const models = fetched && fetched.length > 0 ? fetched : MODEL_PRESETS[provider] ?? [];
   const decideSeconds = Number(intervalNum) * (INTERVAL_UNITS[intervalUnit]?.seconds ?? 1);
+  const notif = cfg.notification;
 
   const startEdit = () => {
     const parts =
@@ -89,8 +92,10 @@ export function SettingsSection({ id }: { id: string }) {
     setProvider(cfg.modelProvider ?? "deepseek");
     setModel(cfg.modelId ?? "");
     setApiKey("");
-    setWebhook("");
-    setClearWebhook(false);
+    setNotifChannel(notif?.channel ?? "");
+    setNotifWebhook(notif?.webhookUrl ?? "");
+    setNotifToken("");
+    setNotifTarget(notif?.target ?? "");
     setError("");
     setEditing(true);
   };
@@ -114,11 +119,23 @@ export function SettingsSection({ id }: { id: string }) {
     if (lev !== cfg.maxLeverage) input.max_leverage = lev;
     if (provider !== cfg.modelProvider) input.model_provider = provider;
     if (model.trim() !== cfg.modelId) input.model_id = model.trim();
-    // Secrets are write-only: send a key/webhook only when the owner typed one;
-    // an explicit clear sends "" (backend drops the override → global fallback).
+    // The LLM key is write-only: send it only when the owner typed a new one.
     if (apiKey.trim()) input.api_key = apiKey.trim();
-    if (webhook.trim()) input.discord_webhook_url = webhook.trim();
-    else if (clearWebhook && cfg.discordWebhookSet) input.discord_webhook_url = "";
+
+    // Notification block — sent only when something in it changed. The Slack
+    // token stays server-side when left blank (backend keeps the stored one).
+    const channelChanged = notifChannel !== (notif?.channel ?? "");
+    const webhookChanged = notifChannel === "discord" && notifWebhook.trim() !== (notif?.webhookUrl ?? "");
+    const slackChanged =
+      notifChannel === "slack" && (notifToken.trim() !== "" || notifTarget.trim() !== (notif?.target ?? ""));
+    if (channelChanged || webhookChanged || slackChanged) {
+      input.notification = {
+        channel: notifChannel,
+        webhook_url: notifChannel === "discord" ? notifWebhook.trim() : undefined,
+        api_key: notifChannel === "slack" && notifToken.trim() ? notifToken.trim() : undefined,
+        target: notifChannel === "slack" ? notifTarget.trim() : undefined,
+      };
+    }
     if (Object.keys(input).length === 1) {
       setEditing(false); // nothing changed
       return;
@@ -152,11 +169,23 @@ export function SettingsSection({ id }: { id: string }) {
           <ROStat label="Max leverage" value={cfg.maxLeverage != null ? `${cfg.maxLeverage}x` : "-"} />
           <ROStat label="LLM provider" value={cfg.modelProvider || "-"} />
           <ROStat label="Model" value={cfg.modelId || "-"} />
-          <ROStat label="LLM API key" value={cfg.llmApiKeySet ? "configured" : "not set"} />
-          <ROStat
-            label="Discord notifications"
-            value={cfg.discordWebhookSet ? "strategy webhook" : "server default"}
-          />
+          <ROStat label="LLM API key" value={cfg.llmApiKeyMasked || "not set"} />
+          <div>
+            <div className="text-xs text-gray-500 mb-1">Notifications</div>
+            {notif ? (
+              <>
+                <div className="text-sm font-medium text-gray-200 capitalize">
+                  {notif.channel}
+                  {notif.target ? ` · ${notif.target}` : ""}
+                </div>
+                {notif.webhookUrl && (
+                  <div className="text-[11px] text-gray-500 break-all">{notif.webhookUrl}</div>
+                )}
+              </>
+            ) : (
+              <div className="text-sm font-medium text-gray-200">off</div>
+            )}
+          </div>
         </div>
       ) : (
         <>
@@ -243,41 +272,69 @@ export function SettingsSection({ id }: { id: string }) {
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 placeholder={
-                  cfg.llmApiKeySet ? "configured — type to replace" : "not set — type to configure"
+                  cfg.llmApiKeyMasked ? `${cfg.llmApiKeyMasked} — type to replace` : "not set — type to configure"
                 }
                 className={`mt-1 w-full ${inputCls}`}
               />
               <span className="text-[11px] text-gray-600 mt-1 block">
-                write-only — the stored key is never shown
+                write-only — the stored key is never shown in full
               </span>
             </label>
 
-            <label className="block">
-              <span className="text-xs text-gray-500">Discord webhook URL</span>
-              <input
-                type="password"
-                autoComplete="off"
-                value={webhook}
-                onChange={(e) => setWebhook(e.target.value)}
-                placeholder={
-                  cfg.discordWebhookSet
-                    ? "strategy override set — type to replace"
-                    : "using the server default — type to override"
-                }
-                className={`mt-1 w-full ${inputCls}`}
-              />
-              {cfg.discordWebhookSet && (
-                <span className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-500">
+            {/* Trade notifications: explicit per-strategy channel. No channel = off. */}
+            <div className="block md:col-span-2">
+              <span className="text-xs text-gray-500">Trade notifications</span>
+              <div className="mt-1 flex flex-wrap items-start gap-3">
+                <select
+                  value={notifChannel}
+                  onChange={(e) => setNotifChannel(e.target.value)}
+                  className={inputCls}
+                >
+                  <option value="">Off</option>
+                  <option value="discord">Discord</option>
+                  <option value="slack">Slack</option>
+                </select>
+
+                {notifChannel === "discord" && (
                   <input
-                    type="checkbox"
-                    checked={clearWebhook}
-                    onChange={(e) => setClearWebhook(e.target.checked)}
-                    className="accent-blue-500"
+                    type="text"
+                    autoComplete="off"
+                    value={notifWebhook}
+                    onChange={(e) => setNotifWebhook(e.target.value)}
+                    placeholder="https://discord.com/api/webhooks/…"
+                    className={`flex-1 min-w-64 ${inputCls}`}
                   />
-                  clear the override (use the server default)
-                </span>
-              )}
-            </label>
+                )}
+
+                {notifChannel === "slack" && (
+                  <>
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      value={notifToken}
+                      onChange={(e) => setNotifToken(e.target.value)}
+                      placeholder={
+                        notif?.apiKeyMasked ? `${notif.apiKeyMasked} — type to replace` : "Bot token (xoxb-…)"
+                      }
+                      className={`flex-1 min-w-48 ${inputCls}`}
+                    />
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      value={notifTarget}
+                      onChange={(e) => setNotifTarget(e.target.value)}
+                      placeholder="#channel"
+                      className={`w-36 ${inputCls}`}
+                    />
+                  </>
+                )}
+              </div>
+              <span className="text-[11px] text-gray-600 mt-1 block">
+                {notifChannel === "discord" && "Posts trade executions to this Discord channel webhook."}
+                {notifChannel === "slack" && "Posts trade executions via a Slack bot token (chat:write scope)."}
+                {notifChannel === "" && "The strategy sends no trade notifications."}
+              </span>
+            </div>
           </div>
 
           <div className="mt-3 flex items-center gap-3">

@@ -581,6 +581,15 @@ export interface EngineRules {
   gateHeartbeatCycles: number;
 }
 
+// The strategy's explicit trade-notification config. The Discord webhook comes
+// back in full (it is the owner's own channel URL); the Slack token only masked.
+export interface NotificationConfigView {
+  channel: "discord" | "slack";
+  webhookUrl?: string;
+  apiKeyMasked?: string;
+  target?: string;
+}
+
 export interface StrategyConfigView {
   maxLeverage: number | null;
   decideIntervalSeconds: number | null;
@@ -592,9 +601,10 @@ export interface StrategyConfigView {
   // calibrated — the backend enforces fast < slow and 2..400 bounds.
   trendEmaFast: number | null;
   trendEmaSlow: number | null;
-  // Presence booleans for secret-bearing fields — the values never leave the server.
-  llmApiKeySet: boolean;
-  discordWebhookSet: boolean;
+  // First characters + **** ("" when unset) — enough to recognize the key.
+  llmApiKeyMasked: string;
+  // Explicit per-strategy notifications; null = the strategy does not notify.
+  notification: NotificationConfigView | null;
   // read-only structural + rules
   exchangeId: string | null;
   tradingMode: string | null;
@@ -621,8 +631,13 @@ export interface UpdateStrategyConfigInput {
   model_provider?: string;
   // LLM api key — sent only when the owner types a new one (never echoed back).
   api_key?: string;
-  // Per-strategy Discord webhook; "" explicitly clears it (global env fallback).
-  discord_webhook_url?: string;
+  // Trade-notification channel; {channel:""} explicitly disables notifications.
+  notification?: {
+    channel: string;
+    webhook_url?: string; // discord
+    api_key?: string; // slack bot token (omit to keep the stored one)
+    target?: string; // slack channel
+  };
   symbols?: string[];
   symbol_groups?: SymbolGroupInput[];
   trend_ema_fast?: number;
