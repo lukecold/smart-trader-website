@@ -255,5 +255,8 @@ export interface CreateStrategyInput {
     template_id?: string;
     prompt_text?: string;
     cap_factor?: number;
+    /** Explicit asset class ("crypto" | "equity"). The backend materializes the typed
+     * instrument universe from it at creation instead of inferring it at runtime. */
+    asset_class?: string;
   };
 }
