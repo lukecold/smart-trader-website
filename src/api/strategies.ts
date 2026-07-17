@@ -147,6 +147,53 @@ export function useFetchBalance() {
   });
 }
 
+// The permission set Binance has recorded for an API key, camelized from the
+// backend's /strategies/validate-credentials response.
+export interface BinanceApiRestrictions {
+  createTime: number;
+  enableFutures: boolean;
+  enableMargin: boolean;
+  enableReading: boolean;
+  enableSpotAndMarginTrading: boolean;
+  enableWithdrawals: boolean;
+  ipRestrict: boolean;
+}
+
+export function useValidateBinanceCredentials() {
+  return useMutation({
+    mutationFn: async (payload: {
+      exchange_id: string;
+      api_key: string;
+      secret_key: string;
+    }) => {
+      const res = await api.post<BinanceApiRestrictions>(
+        "/strategies/validate-credentials",
+        payload
+      );
+      if (res.code !== 0) throw new Error(res.msg || "Validation failed");
+      return res.data;
+    },
+  });
+}
+
+// Static context for the Binance onboarding wizard: the IP users must
+// whitelist on their API key, plus Binance deep links. Only fetched while the
+// wizard is mounted; the values change at most on redeploy.
+export function useBinanceOnboardingInfo() {
+  return useQuery({
+    queryKey: ["onboarding", "binance"],
+    queryFn: async () => {
+      const res = await api.get<{
+        apiManagementUrl: string;
+        registerUrl: string;
+        whitelistIp: string;
+      }>("/onboarding/binance");
+      return res.data;
+    },
+    staleTime: 10 * 60 * 1000,
+  });
+}
+
 export function useEquityCurve(id: string) {
   return useQuery({
     queryKey: ["strategy", id, "equity"] as const,
