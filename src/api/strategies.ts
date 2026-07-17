@@ -329,6 +329,23 @@ export function useUpdatePrompt() {
   });
 }
 
+interface ProviderModelsResponse {
+  provider: string;
+  models: string[];
+  // True when the server holds an env API key for the provider; then a blank
+  // user key falls back to the server key. When false, a key must be entered.
+  serverKeyConfigured: boolean;
+}
+
+async function fetchProviderModels(
+  provider: string
+): Promise<ProviderModelsResponse> {
+  const res = await api.get<ProviderModelsResponse>(
+    `/strategies/models?provider=${encodeURIComponent(provider)}`
+  );
+  return res.data ?? { provider, models: [], serverKeyConfigured: false };
+}
+
 // Available LLM models for a provider, discovered from the provider's /models
 // endpoint. The backend caches per provider for 24h and re-pulls on the first
 // request after that, so selecting a provider transparently gets a fresh list at
@@ -337,14 +354,22 @@ export function useUpdatePrompt() {
 export function useProviderModels(provider: string) {
   return useQuery({
     queryKey: ["models", provider],
-    queryFn: async () => {
-      const res = await api.get<{ provider: string; models: string[] }>(
-        `/strategies/models?provider=${encodeURIComponent(provider)}`
-      );
-      return res.data?.models ?? [];
-    },
+    queryFn: () => fetchProviderModels(provider),
+    select: (d) => d.models,
     enabled: !!provider,
     staleTime: 24 * 60 * 60 * 1000, // server owns the 24h freshness; don't refetch within a session
+  });
+}
+
+// Whether the server has an env API key configured for the provider. Shares the
+// ["models", provider] query with useProviderModels, so it adds no extra fetch.
+export function useProviderServerKeyConfigured(provider: string) {
+  return useQuery({
+    queryKey: ["models", provider],
+    queryFn: () => fetchProviderModels(provider),
+    select: (d) => d.serverKeyConfigured,
+    enabled: !!provider,
+    staleTime: 24 * 60 * 60 * 1000,
   });
 }
 

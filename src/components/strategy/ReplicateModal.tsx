@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   useProviderModels,
+  useProviderServerKeyConfigured,
   useReplicateStrategy,
   useStrategyConfig,
 } from "@/api/strategies";
@@ -58,6 +59,7 @@ export function ReplicateModal({
   }, [config]);
 
   const { data: fetchedModels } = useProviderModels(provider);
+  const { data: serverKeyConfigured } = useProviderServerKeyConfigured(provider);
   const modelOptions = useMemo(
     () =>
       fetchedModels && fetchedModels.length > 0
@@ -77,6 +79,9 @@ export function ReplicateModal({
 
   const providerChanged =
     config?.modelProvider != null && provider !== config.modelProvider;
+  // A blank key only works when the server has one for the new provider —
+  // otherwise the backend rejects the replicate call (no key to fall back to).
+  const keyRequired = providerChanged && serverKeyConfigured === false;
   const isCrypto =
     !config?.exchangeId || !BROKER_EXCHANGES.has(config.exchangeId);
 
@@ -84,6 +89,7 @@ export function ReplicateModal({
   const valid =
     name.trim() !== "" &&
     modelId.trim() !== "" &&
+    (!keyRequired || apiKey.trim() !== "") &&
     (tradingMode === "live" ||
       (initialCapital.trim() !== "" && Number.isFinite(capitalNum) && capitalNum > 0));
 
@@ -193,25 +199,37 @@ export function ReplicateModal({
               </div>
             </div>
 
-            {/* LLM API key — only meaningful when the provider changed */}
+            {/* LLM API key — only meaningful when the provider changed; required
+                unless the server has a key configured for the new provider */}
             {providerChanged && (
               <div className="mt-3">
                 <label className="block text-xs text-gray-500 mb-1">
                   {LLM_PROVIDERS.find((p) => p.value === provider)?.label} API key
-                  (optional)
+                  {serverKeyConfigured ? " (optional)" : ""}
                 </label>
                 <input
                   type="password"
                   autoComplete="off"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="Leave blank to use the server-configured key"
+                  placeholder={
+                    serverKeyConfigured === false
+                      ? "Required — no server-configured key for this provider"
+                      : "Leave blank to use the server-configured key"
+                  }
                   className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-blue-500"
                 />
                 <p className="mt-1 text-xs text-gray-600">
                   The source strategy&apos;s key belongs to the old provider and
                   is not carried over.
                 </p>
+                {serverKeyConfigured === false && (
+                  <p className="mt-1 text-xs text-amber-400/90">
+                    The server has no{" "}
+                    {LLM_PROVIDERS.find((p) => p.value === provider)?.label} key
+                    configured, so a key is required here.
+                  </p>
+                )}
               </div>
             )}
 
