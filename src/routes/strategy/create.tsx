@@ -149,6 +149,12 @@ export function CreateStrategy() {
       setSymbolError(`"${s}" looks like a crypto pair — equity brokers use plain tickers (e.g. AAPL).`);
       return;
     }
+    // Non-US tickers carry an exchange suffix (1211.HK, 8058.TSEJ); only IBKR
+    // routes non-US markets — Alpaca/TradeStation/Schwab are US-only.
+    if (assetClassOf(form.exchangeId) === "equity" && /\.(HK|TSEJ)$/.test(s) && form.exchangeId !== "ibkr") {
+      setSymbolError(`"${s}" is a non-US market ticker — only IBKR can trade those.`);
+      return;
+    }
     setSymbolError("");
     if (!symbols.includes(s)) {
       setSymbols((prev) => [...prev, s]);
@@ -552,7 +558,9 @@ export function CreateStrategy() {
                 </p>
                 <p>Enter your own broker credentials below — they are used only for this strategy.</p>
                 <p className="text-gray-500">
-                  Use plain tickers (e.g. AAPL, MSFT). US market hours apply.
+                  {isIBKR
+                    ? "US tickers plain (AAPL, MSFT); non-US with an exchange suffix: 1211.HK (Hong Kong), 8058.TSEJ (Tokyo). Local market hours apply."
+                    : "Use plain tickers (e.g. AAPL, MSFT). US market hours apply."}
                 </p>
               </div>
 
