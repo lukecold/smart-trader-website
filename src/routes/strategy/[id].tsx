@@ -19,7 +19,9 @@ import { BacktestSection } from "@/components/strategy/BacktestSection";
 import { Markdown } from "@/components/ui/Markdown";
 import { diffLines } from "diff";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
+import { useAuthStore } from "@/stores/auth";
 import { VisibilityToggle } from "@/components/strategy/VisibilityToggle";
+import { ReplicateModal } from "@/components/strategy/ReplicateModal";
 import { SettingsSection } from "@/components/strategy/SettingsSection";
 import { TradingRulesSection } from "@/components/strategy/TradingRulesSection";
 import type { ComposeCycle } from "@/types/strategy";
@@ -61,8 +63,11 @@ function DetailHeader({ id }: { id: string }) {
   const strat = data?.strategies.find((s) => s.strategyId === id);
   const name = strat?.strategyName ?? "";
   const rename = useRenameStrategy();
+  const email = useAuthStore((s) => s.email);
+  const isOwner = !!strat?.userId && strat.userId === email;
 
   const [editing, setEditing] = useState(false);
+  const [replicating, setReplicating] = useState(false);
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
 
@@ -136,7 +141,23 @@ function DetailHeader({ id }: { id: string }) {
               ✎ Rename
             </button>
           )}
+          {isOwner && (
+            <button
+              onClick={() => setReplicating(true)}
+              title="Clone this strategy with a different name, model or trading mode"
+              className="text-xs text-gray-500 hover:text-gray-300 border border-gray-700 hover:border-gray-500 rounded-lg px-2 py-1 transition-colors"
+            >
+              ⧉ Replicate
+            </button>
+          )}
         </div>
+      )}
+      {replicating && (
+        <ReplicateModal
+          strategyId={id}
+          strategyName={name || id.slice(0, 20)}
+          onClose={() => setReplicating(false)}
+        />
       )}
       {error && <p className="text-xs text-red-400 mt-1.5">{error}</p>}
       {editing && !error && (

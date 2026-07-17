@@ -129,6 +129,42 @@ export function useCreateStrategy() {
   });
 }
 
+// Replicate an owned strategy into a new one (owner only). The backend copies
+// the FULL stored config — prompt text, risk config, candle configs, symbols —
+// and applies the overrides, so the replica behaves exactly like the source
+// until edited. Classic use: clone a live strategy into "virtual" (paper) mode
+// on a different model to A/B-test it. The replica starts running immediately.
+// Business errors arrive as HTTP 200 with a non-zero envelope code.
+export interface ReplicateStrategyInput {
+  id: string;
+  strategy_name?: string;
+  provider?: string;
+  model_id?: string;
+  api_key?: string;
+  trading_mode?: "live" | "virtual";
+  initial_capital?: number;
+}
+
+export function useReplicateStrategy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: ReplicateStrategyInput) => {
+      const res = await api.post<{ strategyId: string }>(
+        "/strategies/replicate",
+        input
+      );
+      if (res.code !== 0) {
+        throw new Error(res.msg || "Failed to replicate strategy");
+      }
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.list });
+      qc.invalidateQueries({ queryKey: KEYS.dashboard });
+    },
+  });
+}
+
 export function useFetchBalance() {
   return useMutation({
     mutationFn: async (payload: {

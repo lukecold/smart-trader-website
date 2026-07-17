@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useCreateStrategy, usePrompts, useFetchBalance, useProviderModels } from "@/api/strategies";
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import type { CandleConfig, CreateStrategyInput } from "@/types/strategy";
+import { LLM_PROVIDERS, MODEL_PRESETS } from "@/lib/models";
 import { StandaloneBacktestPanel } from "@/components/strategy/StandaloneBacktestPanel";
 import { BinanceOnboardingWizard } from "@/components/strategy/BinanceOnboardingWizard";
 
@@ -42,17 +43,7 @@ const POPULAR_SYMBOLS_EQUITY = [
   "GOOGL", "META", "TSLA", "SPY",
 ];
 
-const MODEL_PRESETS: Record<string, string[]> = {
-  deepseek: ["deepseek-v4-pro", "deepseek-v4-flash"],
-  openai: ["gpt-4o", "gpt-4o-mini", "o3-mini", "o1-mini"],
-  openrouter: [
-    "deepseek/deepseek-r1",
-    "meta-llama/llama-3.3-70b-instruct",
-    "anthropic/claude-3-5-sonnet",
-    "google/gemini-2.0-flash-001",
-  ],
-  google: ["gemini-2.0-flash-001", "gemini-2.0-flash-thinking-exp", "gemini-1.5-pro"],
-};
+// MODEL_PRESETS moved to @/lib/models (shared with the replicate modal).
 
 // Decision-interval unit → seconds. decide_interval is sent to the backend in seconds.
 const INTERVAL_UNITS: Record<string, { label: string; seconds: number }> = {
@@ -429,10 +420,11 @@ export function CreateStrategy() {
                 if (defaults?.[0]) update("modelId", defaults[0]);
               }}
             >
-              <option value="deepseek">DeepSeek</option>
-              <option value="openrouter">OpenRouter</option>
-              <option value="openai">OpenAI</option>
-              <option value="google">Google</option>
+              {LLM_PROVIDERS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
             </select>
           </Field>
           <Field label="Model">
