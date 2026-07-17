@@ -4,6 +4,7 @@ import { useCreateStrategy, usePrompts, useFetchBalance, useProviderModels } fro
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import type { CandleConfig, CreateStrategyInput } from "@/types/strategy";
 import { StandaloneBacktestPanel } from "@/components/strategy/StandaloneBacktestPanel";
+import { BinanceOnboardingWizard } from "@/components/strategy/BinanceOnboardingWizard";
 
 const DEFAULT_CANDLE_CONFIGS: CandleConfig[] = [
   { interval: "1h", limit: 168 },
@@ -106,6 +107,9 @@ export function CreateStrategy() {
 
   // Backtest panel
   const [showBacktest, setShowBacktest] = useState(false);
+
+  // Binance API-key onboarding wizard (guided create + verify)
+  const [showBinanceWizard, setShowBinanceWizard] = useState(false);
 
   // Model discovery: pull the provider's available models (server caches 24h, re-pulls
   // on select after that). Falls back to the hardcoded presets while loading / on error.
@@ -477,6 +481,22 @@ export function CreateStrategy() {
             </select>
           </Field>
 
+          {form.exchangeId === "binance" && (
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={() => withAuth(() => setShowBinanceWizard(true))}
+                className="text-sm px-4 py-2 rounded-lg bg-gray-800 border border-gray-700 text-blue-400 hover:bg-gray-700 hover:text-blue-300 transition-colors"
+              >
+                ⚡ Set up Binance API key — guided
+              </button>
+              <p className="text-xs text-gray-500">
+                New to Binance or API keys? The wizard walks you through account creation, key
+                setup with IP whitelisting, and verifies the key before you use it.
+              </p>
+            </div>
+          )}
+
           {isCrypto && (
             <Field label="Trading Mode">
               <select
@@ -837,6 +857,26 @@ export function CreateStrategy() {
             }
           />
         </div>
+      )}
+
+      {showBinanceWizard && (
+        <BinanceOnboardingWizard
+          marketType={form.marketType}
+          onCancel={() => setShowBinanceWizard(false)}
+          onComplete={({ apiKey, secretKey }) => {
+            // A verified key exists to trade live: fill the credential fields
+            // and flip to live mode so they're visible and submitted.
+            setForm((prev) => ({
+              ...prev,
+              tradingMode: "live",
+              exchangeApiKey: apiKey,
+              exchangeSecretKey: secretKey,
+            }));
+            setBalanceFetched(false);
+            setBalanceError("");
+            setShowBinanceWizard(false);
+          }}
+        />
       )}
     </div>
   );
