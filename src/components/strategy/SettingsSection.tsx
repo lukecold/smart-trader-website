@@ -7,9 +7,12 @@ import {
 } from "@/api/strategies";
 
 // Owner-only strategy settings: decision frequency, max leverage, LLM
-// provider/model. Read-only by default; the ✎ Edit button reveals the form.
+// provider/model, LLM API key, Discord notification webhook. Read-only by
+// default; the ✎ Edit button reveals the form.
 // Saved edits hot-apply to the live strategy (no restart): cadence on the loop's
-// next tick, model on the next LLM cycle, leverage immediately.
+// next tick, model/key on the next LLM cycle, leverage immediately. Secret
+// fields (key/webhook) are write-only — the server reports presence booleans,
+// never the values.
 
 // Decision-interval unit → seconds (mirrors the create page).
 const INTERVAL_UNITS: Record<string, { label: string; seconds: number }> = {
@@ -63,6 +66,9 @@ export function SettingsSection({ id }: { id: string }) {
   const [leverage, setLeverage] = useState("");
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [webhook, setWebhook] = useState("");
+  const [clearWebhook, setClearWebhook] = useState(false);
   const [error, setError] = useState("");
 
   // Model discovery for the provider currently selected in the form (hook must run
@@ -82,6 +88,9 @@ export function SettingsSection({ id }: { id: string }) {
     setLeverage(cfg.maxLeverage != null ? String(cfg.maxLeverage) : "");
     setProvider(cfg.modelProvider ?? "deepseek");
     setModel(cfg.modelId ?? "");
+    setApiKey("");
+    setWebhook("");
+    setClearWebhook(false);
     setError("");
     setEditing(true);
   };
@@ -105,6 +114,11 @@ export function SettingsSection({ id }: { id: string }) {
     if (lev !== cfg.maxLeverage) input.max_leverage = lev;
     if (provider !== cfg.modelProvider) input.model_provider = provider;
     if (model.trim() !== cfg.modelId) input.model_id = model.trim();
+    // Secrets are write-only: send a key/webhook only when the owner typed one;
+    // an explicit clear sends "" (backend drops the override → global fallback).
+    if (apiKey.trim()) input.api_key = apiKey.trim();
+    if (webhook.trim()) input.discord_webhook_url = webhook.trim();
+    else if (clearWebhook && cfg.discordWebhookSet) input.discord_webhook_url = "";
     if (Object.keys(input).length === 1) {
       setEditing(false); // nothing changed
       return;
@@ -138,6 +152,11 @@ export function SettingsSection({ id }: { id: string }) {
           <ROStat label="Max leverage" value={cfg.maxLeverage != null ? `${cfg.maxLeverage}x` : "-"} />
           <ROStat label="LLM provider" value={cfg.modelProvider || "-"} />
           <ROStat label="Model" value={cfg.modelId || "-"} />
+          <ROStat label="LLM API key" value={cfg.llmApiKeySet ? "configured" : "not set"} />
+          <ROStat
+            label="Discord notifications"
+            value={cfg.discordWebhookSet ? "strategy webhook" : "server default"}
+          />
         </div>
       ) : (
         <>
@@ -214,6 +233,50 @@ export function SettingsSection({ id }: { id: string }) {
                   <option key={m} value={m} />
                 ))}
               </datalist>
+            </label>
+
+            <label className="block">
+              <span className="text-xs text-gray-500">LLM API key</span>
+              <input
+                type="password"
+                autoComplete="off"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={
+                  cfg.llmApiKeySet ? "configured — type to replace" : "not set — type to configure"
+                }
+                className={`mt-1 w-full ${inputCls}`}
+              />
+              <span className="text-[11px] text-gray-600 mt-1 block">
+                write-only — the stored key is never shown
+              </span>
+            </label>
+
+            <label className="block">
+              <span className="text-xs text-gray-500">Discord webhook URL</span>
+              <input
+                type="password"
+                autoComplete="off"
+                value={webhook}
+                onChange={(e) => setWebhook(e.target.value)}
+                placeholder={
+                  cfg.discordWebhookSet
+                    ? "strategy override set — type to replace"
+                    : "using the server default — type to override"
+                }
+                className={`mt-1 w-full ${inputCls}`}
+              />
+              {cfg.discordWebhookSet && (
+                <span className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-500">
+                  <input
+                    type="checkbox"
+                    checked={clearWebhook}
+                    onChange={(e) => setClearWebhook(e.target.checked)}
+                    className="accent-blue-500"
+                  />
+                  clear the override (use the server default)
+                </span>
+              )}
             </label>
           </div>
 

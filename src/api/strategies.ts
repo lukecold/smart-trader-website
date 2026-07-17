@@ -592,6 +592,9 @@ export interface StrategyConfigView {
   // calibrated — the backend enforces fast < slow and 2..400 bounds.
   trendEmaFast: number | null;
   trendEmaSlow: number | null;
+  // Presence booleans for secret-bearing fields — the values never leave the server.
+  llmApiKeySet: boolean;
+  discordWebhookSet: boolean;
   // read-only structural + rules
   exchangeId: string | null;
   tradingMode: string | null;
@@ -616,6 +619,10 @@ export interface UpdateStrategyConfigInput {
   decide_interval_seconds?: number;
   model_id?: string;
   model_provider?: string;
+  // LLM api key — sent only when the owner types a new one (never echoed back).
+  api_key?: string;
+  // Per-strategy Discord webhook; "" explicitly clears it (global env fallback).
+  discord_webhook_url?: string;
   symbols?: string[];
   symbol_groups?: SymbolGroupInput[];
   trend_ema_fast?: number;
