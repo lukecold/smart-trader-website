@@ -116,12 +116,14 @@ export function CreateStrategy() {
   const symbolMatches = (symbolSearch?.matches ?? []).filter(
     (m) => form.exchangeId === "ibkr" || !m.suffix
   );
+  // A failed/unavailable search still opens the dropdown (one muted notice row)
+  // so the user can tell search exists but is down; the typed symbol still
+  // commits with Enter, and keyboard nav is inert with an empty match list.
+  const symbolSearchUnavailable = symbolSearchFailed || !!symbolSearch?.unavailable;
   const symbolDropdownOpen =
     symbolFocused &&
     trimmedSymbolQuery.length >= 2 &&
-    trimmedSymbolQuery !== symbolDismissed &&
-    !symbolSearch?.unavailable &&
-    !symbolSearchFailed;
+    trimmedSymbolQuery !== symbolDismissed;
   const symbolSearchPending =
     symbolSearching || trimmedSymbolQuery !== debouncedSymbolQuery;
 
@@ -505,7 +507,11 @@ export function CreateStrategy() {
               </div>
               {symbolDropdownOpen && (
                 <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-lg border border-gray-700 bg-gray-900 shadow-xl">
-                  {symbolSearchPending ? (
+                  {symbolSearchUnavailable ? (
+                    <div className="px-3 py-2 text-xs text-gray-500">
+                      Ticker search unavailable — type the full symbol and press Enter
+                    </div>
+                  ) : symbolSearchPending ? (
                     <div className="px-3 py-2 text-xs text-gray-500">Searching…</div>
                   ) : symbolMatches.length === 0 ? (
                     <div className="px-3 py-2 text-xs text-gray-500">No matches</div>
