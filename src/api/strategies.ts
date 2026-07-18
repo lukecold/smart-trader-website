@@ -10,6 +10,7 @@ import type {
   Prompt,
   PromptVersion,
   CreateStrategyInput,
+  CandleConfig,
   DashboardResponse,
   LeaderboardResponse,
   LeaderboardRange,
@@ -134,6 +135,11 @@ export function useCreateStrategy() {
 // and applies the overrides, so the replica behaves exactly like the source
 // until edited. Classic use: clone a live strategy into "virtual" (paper) mode
 // on a different model to A/B-test it. The replica starts running immediately.
+// Every field except `id` is optional: empty/absent means "keep the source
+// value"; struct fields (symbols, candle_configs, notification) are FULL
+// replacements when present. On an exchange_id switch the source broker's
+// credentials/routing are dropped server-side and re-resolved from the server
+// environment — the request never carries exchange credentials.
 // Business errors arrive as HTTP 200 with a non-zero envelope code.
 export interface ReplicateStrategyInput {
   id: string;
@@ -143,6 +149,27 @@ export interface ReplicateStrategyInput {
   api_key?: string;
   trading_mode?: "live" | "virtual";
   initial_capital?: number;
+  // Broker switch + Binance market type ("swap" | "spot").
+  exchange_id?: string;
+  market_type?: string;
+  // Full ticker-set replacement (non-empty when sent — the source set cannot be
+  // cleared via replicate).
+  symbols?: string[];
+  // Trading-config tuning knobs (seconds for decide_interval).
+  max_leverage?: number;
+  max_positions?: number;
+  decide_interval?: number;
+  cap_factor?: number;
+  candle_configs?: CandleConfig[];
+  prompt_text?: string;
+  template_id?: string;
+  // Trade-notification channel replacement; an explicit empty channel clears it.
+  notification?: {
+    channel: string;
+    webhook_url?: string; // discord
+    api_key?: string; // slack bot token
+    target?: string; // slack channel
+  };
 }
 
 export function useReplicateStrategy() {
@@ -667,6 +694,8 @@ export interface StrategyConfigView {
   // calibrated — the backend enforces fast < slow and 2..400 bounds.
   trendEmaFast: number | null;
   trendEmaSlow: number | null;
+  // Candle configs as persisted (replicate prefill; not editable via update-config).
+  candleConfigs: CandleConfig[] | null;
   // First characters + **** ("" when unset) — enough to recognize the key.
   llmApiKeyMasked: string;
   // Explicit per-strategy notifications; null = the strategy does not notify.
@@ -678,6 +707,9 @@ export interface StrategyConfigView {
   maxPositions: number | null;
   capFactor: number | null;
   strategyType: string | null;
+  // Non-sensitive exchange/universe shape (replicate prefill).
+  marketType: string | null;
+  assetClass: string | null;
   rules: EngineRules | null;
 }
 
