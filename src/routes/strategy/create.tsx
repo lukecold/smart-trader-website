@@ -149,9 +149,9 @@ export function CreateStrategy() {
       setSymbolError(`"${s}" looks like a crypto pair — equity brokers use plain tickers (e.g. AAPL).`);
       return;
     }
-    // Non-US tickers carry an exchange suffix (1211.HK, 8058.TSEJ); only IBKR
-    // routes non-US markets — Alpaca/TradeStation/Schwab are US-only.
-    if (assetClassOf(form.exchangeId) === "equity" && /\.(HK|TSEJ)$/.test(s) && form.exchangeId !== "ibkr") {
+    // Non-US tickers carry an exchange suffix (1211.HK, 8058.TSEJ, 005930.KR, HSBA.L, ...);
+    // only IBKR routes non-US markets — Alpaca/TradeStation/Schwab are US-only.
+    if (assetClassOf(form.exchangeId) === "equity" && /\.(HK|TSEJ|KR|L|DE|TO|AU|SG)$/.test(s) && form.exchangeId !== "ibkr") {
       setSymbolError(`"${s}" is a non-US market ticker — only IBKR can trade those.`);
       return;
     }
@@ -559,7 +559,7 @@ export function CreateStrategy() {
                 <p>Enter your own broker credentials below — they are used only for this strategy.</p>
                 <p className="text-gray-500">
                   {isIBKR
-                    ? "US tickers plain (AAPL, MSFT); non-US with an exchange suffix: 1211.HK (Hong Kong), 8058.TSEJ (Tokyo). Local market hours apply."
+                    ? "US tickers plain (AAPL, MSFT); non-US with an exchange suffix: 1211.HK (Hong Kong), 8058.TSEJ (Tokyo), 005930.KR (Seoul), HSBA.L (London), BMW.DE (Xetra), RY.TO (Toronto), BHP.AU (Sydney), D05.SG (Singapore). Local market hours apply."
                     : "Use plain tickers (e.g. AAPL, MSFT). US market hours apply."}
                 </p>
               </div>
