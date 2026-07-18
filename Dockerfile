@@ -13,12 +13,17 @@ FROM nginx:alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# SPA routing
+# SPA routing + cache policy: index.html (and the SPA fallback serving it) must
+# revalidate on every load so deploys take effect immediately (ETag/Last-Modified
+# keep the revalidation a cheap 304), while Vite's content-hashed /assets bundles
+# are cached forever.
 RUN echo 'server { \
     listen 3000; \
     root /usr/share/nginx/html; \
     index index.html; \
-    location / { try_files $uri $uri/ /index.html; } \
+    location /assets/ { add_header Cache-Control "public, max-age=31536000, immutable"; } \
+    location = /index.html { add_header Cache-Control "no-cache"; } \
+    location / { add_header Cache-Control "no-cache"; try_files $uri $uri/ /index.html; } \
     location /api { proxy_pass http://go-service:8080; } \
     location /graphql { proxy_pass http://go-service:8080; } \
 }' > /etc/nginx/conf.d/default.conf
