@@ -8,6 +8,13 @@ import {
   type SymbolGroupView,
   type UpdateStrategyConfigInput,
 } from "@/api/strategies";
+import { SymbolTagInput } from "@/components/strategy/SymbolTagInput";
+import {
+  assetClassOf,
+  POPULAR_SYMBOLS_CRYPTO,
+  POPULAR_SYMBOLS_EQUITY,
+  type AssetClass,
+} from "@/lib/brokers";
 
 // Owner-only trading-rules panel. Editable: the tradable-symbol universe and the
 // volatility GROUPS (any number of named tiers, each with its own holdings caps —
@@ -123,59 +130,9 @@ function fmtRule(v: number | boolean, fmt: Fmt): string {
   return fmtPct(v as number);
 }
 
-// Chip/tag input for a list of tickers (add on Enter/comma, × to remove, Backspace on an
-// empty field pops the last). Mirrors the create-form symbol editor.
-function ChipInput({
-  value,
-  onChange,
-  placeholder,
-}: {
-  value: string[];
-  onChange: (v: string[]) => void;
-  placeholder?: string;
-}) {
-  const [text, setText] = useState("");
-  const add = (raw: string) => {
-    const s = raw.trim().toUpperCase();
-    if (s && !value.includes(s)) onChange([...value, s]);
-    setText("");
-  };
-  return (
-    <div className="min-h-[42px] w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 flex flex-wrap gap-1.5 focus-within:border-blue-500">
-      {value.map((s) => (
-        <span
-          key={s}
-          className="inline-flex items-center gap-1 bg-blue-500/20 text-blue-300 text-xs px-2 py-1 rounded-full"
-        >
-          {s}
-          <button
-            type="button"
-            onClick={() => onChange(value.filter((x) => x !== s))}
-            className="text-blue-300/70 hover:text-blue-100"
-            aria-label={`Remove ${s}`}
-          >
-            ×
-          </button>
-        </span>
-      ))}
-      <input
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === ",") {
-            e.preventDefault();
-            add(text);
-          } else if (e.key === "Backspace" && text === "" && value.length) {
-            onChange(value.slice(0, -1));
-          }
-        }}
-        onBlur={() => text.trim() && add(text)}
-        placeholder={value.length ? "" : placeholder}
-        className="flex-1 min-w-[100px] bg-transparent text-white text-sm outline-none px-1"
-      />
-    </div>
-  );
-}
+// The ticker editors (tradable symbols + per-group lists) are the shared
+// search-enabled SymbolTagInput — seeded chips render as-is (no re-validation),
+// so tickers outside the broker's search universe (e.g. OTC names) are kept.
 
 export function TradingRulesSection({ id }: { id: string }) {
   const { data: dash } = useDashboard();
@@ -197,6 +154,18 @@ export function TradingRulesSection({ id }: { id: string }) {
   const [error, setError] = useState("");
 
   if (!isOwner || !cfg) return null;
+
+  // Broker scoping for the ticker search, mirroring the create form: the explicit
+  // persisted asset class wins, else infer from the exchange (legacy strategies may
+  // lack both — the crypto defaults keep the old free-form behavior).
+  const exchangeId = cfg.exchangeId ?? "";
+  const assetClass: AssetClass =
+    cfg.assetClass === "equity" || cfg.assetClass === "crypto"
+      ? cfg.assetClass
+      : assetClassOf(exchangeId);
+  const marketType = cfg.marketType ?? "swap";
+  const popularSymbols =
+    assetClass === "equity" ? POPULAR_SYMBOLS_EQUITY : POPULAR_SYMBOLS_CRYPTO;
 
   const startEdit = () => {
     const seedSymbols = cfg.symbols ?? [];
@@ -372,12 +341,19 @@ export function TradingRulesSection({ id }: { id: string }) {
         </div>
       ) : (
         <div className="space-y-4">
-          <label className="block">
+          <div>
             <span className="text-xs text-gray-500">Tradable symbols</span>
             <div className="mt-1">
-              <ChipInput value={symbols} onChange={setSymbols} placeholder="Add a ticker, e.g. BTC/USDT" />
+              <SymbolTagInput
+                symbols={symbols}
+                onChange={setSymbols}
+                exchangeId={exchangeId}
+                assetClass={assetClass}
+                marketType={marketType}
+                popularSymbols={popularSymbols}
+              />
             </div>
-          </label>
+          </div>
 
           <div>
             <div className="flex items-center justify-between mb-1.5">
@@ -404,10 +380,13 @@ export function TradingRulesSection({ id }: { id: string }) {
                       Remove
                     </button>
                   </div>
-                  <ChipInput
-                    value={g.symbols}
+                  <SymbolTagInput
+                    symbols={g.symbols}
                     onChange={(v) => updateGroup(i, { symbols: v })}
-                    placeholder="Add tickers for this group"
+                    exchangeId={exchangeId}
+                    assetClass={assetClass}
+                    marketType={marketType}
+                    popularSymbols={[]}
                   />
                   <div className="flex gap-2">
                     <label className="flex-1 block">

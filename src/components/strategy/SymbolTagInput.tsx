@@ -54,6 +54,9 @@ export function SymbolTagInput({
 }) {
   const [symbolInput, setSymbolInput] = useState("");
   const [symbolError, setSymbolError] = useState("");
+  // One-shot notice for a duplicate add (used to silently clear the input). Shows
+  // near the input and clears on the next keystroke / broker switch / real add.
+  const [symbolHint, setSymbolHint] = useState("");
   const symbolInputRef = useRef<HTMLInputElement>(null);
 
   // Ticker search for every broker: equities (incl. the non-US venues) for equity
@@ -101,6 +104,7 @@ export function SymbolTagInput({
   useEffect(() => {
     setSymbolInput("");
     setSymbolError("");
+    setSymbolHint("");
     setSymbolDismissed("");
   }, [exchangeId, assetClass]);
 
@@ -116,9 +120,14 @@ export function SymbolTagInput({
       return;
     }
     setSymbolError("");
-    if (!symbols.includes(s)) {
-      onChange([...symbols, s]);
+    if (symbols.includes(s)) {
+      // Duplicate add: keep the no-op, but say so instead of silently clearing.
+      setSymbolHint(`${s} is already in the list`);
+      setSymbolInput("");
+      return;
     }
+    setSymbolHint("");
+    onChange([...symbols, s]);
     setSymbolInput("");
   };
 
@@ -170,23 +179,25 @@ export function SymbolTagInput({
 
   return (
     <div>
-      {/* Popular presets */}
-      <div className="flex flex-wrap gap-1.5 mb-2">
-        {popularSymbols.map((sym) => (
-          <button
-            key={sym}
-            type="button"
-            onClick={() => togglePopularSymbol(sym)}
-            className={`text-xs px-2 py-1 rounded-full border transition-colors ${
-              symbols.includes(sym)
-                ? "border-blue-500 bg-blue-500/20 text-blue-300"
-                : "border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-500"
-            }`}
-          >
-            {sym}
-          </button>
-        ))}
-      </div>
+      {/* Popular presets (omitted when a caller passes none, e.g. group editors) */}
+      {popularSymbols.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {popularSymbols.map((sym) => (
+            <button
+              key={sym}
+              type="button"
+              onClick={() => togglePopularSymbol(sym)}
+              className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                symbols.includes(sym)
+                  ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                  : "border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-500"
+              }`}
+            >
+              {sym}
+            </button>
+          ))}
+        </div>
+      )}
       {/* Tag input + ticker-search dropdown (all brokers) */}
       <div className="relative">
         <div
@@ -214,7 +225,10 @@ export function SymbolTagInput({
           <input
             ref={symbolInputRef}
             value={symbolInput}
-            onChange={(e) => setSymbolInput(e.target.value)}
+            onChange={(e) => {
+              setSymbolInput(e.target.value);
+              setSymbolHint(""); // a duplicate hint lives only until the next keystroke
+            }}
             onKeyDown={handleSymbolKeyDown}
             onFocus={() => setSymbolFocused(true)}
             onBlur={() => {
@@ -265,7 +279,15 @@ export function SymbolTagInput({
           </div>
         )}
       </div>
-      <p className="text-xs text-gray-600 mt-1">Click presets or type and press Enter / comma</p>
+      {symbolHint ? (
+        <p className="text-xs text-yellow-500 mt-1">{symbolHint}</p>
+      ) : (
+        <p className="text-xs text-gray-600 mt-1">
+          {popularSymbols.length > 0
+            ? "Click presets or type and press Enter / comma"
+            : "Type and press Enter / comma"}
+        </p>
+      )}
       {symbolError && <p className="text-xs text-red-400 mt-1">{symbolError}</p>}
     </div>
   );
