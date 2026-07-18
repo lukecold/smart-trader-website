@@ -393,10 +393,17 @@ interface InstrumentSearchResponse {
 }
 
 async function fetchInstrumentSearch(
-  q: string
+  q: string,
+  assetClass: "equity" | "crypto",
+  marketType: string
 ): Promise<InstrumentSearchResponse> {
+  const params = new URLSearchParams({
+    q,
+    asset_class: assetClass,
+    market_type: marketType,
+  });
   const res = await api.get<InstrumentSearchResponse>(
-    `/instruments/search?q=${encodeURIComponent(q)}`
+    `/instruments/search?${params}`
   );
   if (res.code === 503) {
     return { matches: [], unavailable: true };
@@ -407,16 +414,21 @@ async function fetchInstrumentSearch(
   return res.data;
 }
 
-// Ticker search across all supported markets (US + the suffixed IBKR venues).
-// The backend caches per normalized query for 5 minutes; the 60s staleTime here
-// keeps repeated keystrokes within a session from refetching. Disabled below 2
-// chars and logged out (the endpoint is auth-only — it rides the user's private
-// IBKR market-data session).
-export function useInstrumentSearch(q: string) {
+// Ticker search across all supported markets: equities (US + the suffixed IBKR
+// venues) for equity brokers, Binance tradable pairs (BASE-QUOTE) for crypto
+// brokers on the given market type (swap/spot). The backend caches per
+// (class, market, normalized query) for 5 minutes; the 60s staleTime here keeps
+// repeated keystrokes within a session from refetching. Disabled below 2 chars
+// and logged out (the endpoint is auth-only).
+export function useInstrumentSearch(
+  q: string,
+  assetClass: "equity" | "crypto",
+  marketType: string
+) {
   const { isAuthenticated } = useAuthStore();
   return useQuery({
-    queryKey: ["instrumentSearch", q],
-    queryFn: () => fetchInstrumentSearch(q),
+    queryKey: ["instrumentSearch", assetClass, marketType, q],
+    queryFn: () => fetchInstrumentSearch(q, assetClass, marketType),
     enabled: isAuthenticated && q.trim().length >= 2,
     staleTime: 60 * 1000,
     retry: false, // a failed search must not stall typing with retry storms

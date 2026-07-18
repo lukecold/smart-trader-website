@@ -91,29 +91,31 @@ export function CreateStrategy() {
   const [symbolError, setSymbolError] = useState("");
   const symbolInputRef = useRef<HTMLInputElement>(null);
 
-  // Ticker search (equity brokers only — crypto keeps free-form pairs). Debounced
-  // so a request fires per pause, not per keystroke; the dropdown state is derived
-  // from this query.
+  // Ticker search for every broker: equities (incl. the non-US venues) for equity
+  // brokers, Binance tradable pairs for crypto. Debounced so a request fires per
+  // pause, not per keystroke; the dropdown state is derived from this query.
   const [symbolFocused, setSymbolFocused] = useState(false);
   const [symbolHighlight, setSymbolHighlight] = useState(-1);
   const [symbolDismissed, setSymbolDismissed] = useState(""); // query the user Escaped away
   const trimmedSymbolQuery = symbolInput.trim();
   const debouncedSymbolQuery = useDebouncedValue(trimmedSymbolQuery, 300);
-  const symbolSearchQuery =
-    assetClassOf(form.exchangeId) === "equity" ? debouncedSymbolQuery : "";
+  const symbolAssetClass = assetClassOf(form.exchangeId);
   const {
     data: symbolSearch,
     isFetching: symbolSearching,
     isError: symbolSearchFailed,
-  } = useInstrumentSearch(symbolSearchQuery);
+  } = useInstrumentSearch(
+    debouncedSymbolQuery,
+    symbolAssetClass,
+    symbolAssetClass === "crypto" ? form.marketType : "swap"
+  );
 
-  // US-only brokers (Alpaca/TradeStation/Schwab) hide non-US matches; addSymbol's
-  // suffix guard stays as the backstop.
+  // US-only brokers (Alpaca/TradeStation/Schwab) hide non-US matches; crypto
+  // matches carry no suffix and always pass. addSymbol's guard stays as backstop.
   const symbolMatches = (symbolSearch?.matches ?? []).filter(
     (m) => form.exchangeId === "ibkr" || !m.suffix
   );
   const symbolDropdownOpen =
-    assetClassOf(form.exchangeId) === "equity" &&
     symbolFocused &&
     trimmedSymbolQuery.length >= 2 &&
     trimmedSymbolQuery !== symbolDismissed &&
@@ -462,7 +464,7 @@ export function CreateStrategy() {
                 </button>
               ))}
             </div>
-            {/* Tag input + ticker-search dropdown (equity brokers only) */}
+            {/* Tag input + ticker-search dropdown (all brokers) */}
             <div className="relative">
               <div
                 className="min-h-[42px] bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 flex flex-wrap gap-1.5 items-center cursor-text focus-within:border-blue-500 transition-colors"
