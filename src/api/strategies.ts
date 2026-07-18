@@ -395,12 +395,14 @@ interface InstrumentSearchResponse {
 async function fetchInstrumentSearch(
   q: string,
   assetClass: "equity" | "crypto",
-  marketType: string
+  marketType: string,
+  broker: string
 ): Promise<InstrumentSearchResponse> {
   const params = new URLSearchParams({
     q,
     asset_class: assetClass,
     market_type: marketType,
+    broker,
   });
   const res = await api.get<InstrumentSearchResponse>(
     `/instruments/search?${params}`
@@ -414,21 +416,23 @@ async function fetchInstrumentSearch(
   return res.data;
 }
 
-// Ticker search across all supported markets: equities (US + the suffixed IBKR
-// venues) for equity brokers, Binance tradable pairs (BASE-QUOTE) for crypto
-// brokers on the given market type (swap/spot). The backend caches per
-// (class, market, normalized query) for 5 minutes; the 60s staleTime here keeps
+// Ticker search across the SELECTED broker's universe: Binance tradable pairs
+// (BASE-QUOTE) for crypto brokers on the given market type (swap/spot), Alpaca's
+// US-equity assets for broker=alpaca, all supported stock markets (US + the
+// suffixed IBKR venues) for broker=ibkr. The backend caches per
+// (broker, market, normalized query) for 5 minutes; the 60s staleTime here keeps
 // repeated keystrokes within a session from refetching. Disabled below 2 chars
 // and logged out (the endpoint is auth-only).
 export function useInstrumentSearch(
   q: string,
   assetClass: "equity" | "crypto",
-  marketType: string
+  marketType: string,
+  broker: string
 ) {
   const { isAuthenticated } = useAuthStore();
   return useQuery({
-    queryKey: ["instrumentSearch", assetClass, marketType, q],
-    queryFn: () => fetchInstrumentSearch(q, assetClass, marketType),
+    queryKey: ["instrumentSearch", assetClass, marketType, broker, q],
+    queryFn: () => fetchInstrumentSearch(q, assetClass, marketType, broker),
     enabled: isAuthenticated && q.trim().length >= 2,
     staleTime: 60 * 1000,
     retry: false, // a failed search must not stall typing with retry storms

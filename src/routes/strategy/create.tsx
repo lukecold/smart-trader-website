@@ -107,7 +107,8 @@ export function CreateStrategy() {
   } = useInstrumentSearch(
     debouncedSymbolQuery,
     symbolAssetClass,
-    symbolAssetClass === "crypto" ? form.marketType : "swap"
+    symbolAssetClass === "crypto" ? form.marketType : "swap",
+    form.exchangeId
   );
 
   // US-only brokers (Alpaca/TradeStation/Schwab) hide non-US matches; crypto
