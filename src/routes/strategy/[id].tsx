@@ -1,4 +1,4 @@
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { useRef, useState, useEffect, useCallback } from "react";
 import {
   useStrategyPerformance,
@@ -12,6 +12,7 @@ import {
   useStrategyStatus,
   useStrategies,
   useRenameStrategy,
+  useDeleteStrategy,
 } from "@/api/strategies";
 import { formatCurrency, formatPct, formatNumber, cn } from "@/lib/utils";
 import { PromptSection, InlineDiff, SplitDiff } from "@/components/strategy/PromptSection";
@@ -63,6 +64,8 @@ function DetailHeader({ id }: { id: string }) {
   const strat = data?.strategies.find((s) => s.strategyId === id);
   const name = strat?.strategyName ?? "";
   const rename = useRenameStrategy();
+  const del = useDeleteStrategy();
+  const navigate = useNavigate();
   const email = useAuthStore((s) => s.email);
   const isOwner = !!strat?.userId && strat.userId === email;
 
@@ -70,6 +73,17 @@ function DetailHeader({ id }: { id: string }) {
   const [replicating, setReplicating] = useState(false);
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
+
+  // Same confirm-then-delete flow as the dashboard card; the hook invalidates
+  // the strategies list on success, then we leave for the dashboard.
+  const handleDelete = () => {
+    if (!confirm("Delete this strategy?")) return;
+    setError("");
+    del.mutate(id, {
+      onSuccess: () => navigate("/"),
+      onError: (e) => setError((e as Error).message),
+    });
+  };
 
   const startEdit = () => {
     setValue(name);
@@ -148,6 +162,16 @@ function DetailHeader({ id }: { id: string }) {
               className="text-xs text-gray-500 hover:text-gray-300 border border-gray-700 hover:border-gray-500 rounded-lg px-2 py-1 transition-colors"
             >
               ⧉ Replicate
+            </button>
+          )}
+          {isOwner && (
+            <button
+              onClick={handleDelete}
+              disabled={del.isPending}
+              title="Delete this strategy"
+              className="text-xs text-red-400/70 hover:text-red-300 border border-red-900/50 hover:border-red-700 rounded-lg px-2 py-1 transition-colors disabled:opacity-40"
+            >
+              {del.isPending ? "Deleting…" : "Delete"}
             </button>
           )}
         </div>
