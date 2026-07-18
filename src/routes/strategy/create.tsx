@@ -4,7 +4,7 @@ import { useCreateStrategy, usePrompts, useFetchBalance, useProviderModels } fro
 import { useAuthGuard } from "@/hooks/useAuthGuard";
 import type { CandleConfig, CreateStrategyInput } from "@/types/strategy";
 import { LLM_PROVIDERS, MODEL_PRESETS } from "@/lib/models";
-import { BROKERS, assetClassOf, POPULAR_SYMBOLS_CRYPTO, POPULAR_SYMBOLS_EQUITY } from "@/lib/brokers";
+import { BROKERS, assetClassOf, POPULAR_SYMBOLS_CRYPTO, POPULAR_SYMBOLS_EQUITY, POPULAR_SYMBOLS_HYPERLIQUID } from "@/lib/brokers";
 import type { AssetClass } from "@/lib/brokers";
 import { StandaloneBacktestPanel } from "@/components/strategy/StandaloneBacktestPanel";
 import { BinanceOnboardingWizard } from "@/components/strategy/BinanceOnboardingWizard";
@@ -184,8 +184,10 @@ export function CreateStrategy() {
         account_id: isIBKR ? form.accountId || undefined : undefined,
         gateway_url: isIBKR ? form.gatewayUrl || undefined : undefined,
         base_currency: isEquity ? "USD" : undefined,
-        // Equities are always live (real broker API to a paper account by default).
-        trading_mode: isEquity ? "live" : opts?.tradingMode ?? form.tradingMode,
+        // Equities are always live (real broker API to a paper account by default);
+        // Hyperliquid likewise (its testnet is the paper path, so a "virtual"
+        // Binance-data strategy makes no sense for perp names).
+        trading_mode: isEquity || isHyperliquid ? "live" : opts?.tradingMode ?? form.tradingMode,
         // Crypto-perp-only knobs — omitted for equities.
         market_type: isCrypto ? form.marketType : undefined,
         margin_mode: isCrypto ? form.marginMode : undefined,
@@ -230,10 +232,17 @@ export function CreateStrategy() {
   const isCrypto = !isEquity;
   const isAlpaca = form.exchangeId === "alpaca";
   const isIBKR = form.exchangeId === "ibkr";
+  const isHyperliquid = form.exchangeId === "hyperliquid";
   const isLive = form.tradingMode === "live";
   const isCryptoLive = isCrypto && isLive; // live crypto needs key/secret + balance fetch
-  const needsKeySecret = isCryptoLive || isAlpaca; // brokers that take an API key + secret
-  const popularSymbols = isEquity ? POPULAR_SYMBOLS_EQUITY : POPULAR_SYMBOLS_CRYPTO;
+  // Brokers that take an API key + secret in this form. Hyperliquid is excluded:
+  // its credential (a private key) comes from the server environment.
+  const needsKeySecret = (isCryptoLive && !isHyperliquid) || isAlpaca;
+  const popularSymbols = isEquity
+    ? POPULAR_SYMBOLS_EQUITY
+    : isHyperliquid
+    ? POPULAR_SYMBOLS_HYPERLIQUID
+    : POPULAR_SYMBOLS_CRYPTO;
   const decideSeconds =
     form.decideInterval * (INTERVAL_UNITS[form.decideIntervalUnit]?.seconds ?? 1);
 
@@ -243,8 +252,9 @@ export function CreateStrategy() {
     setForm((prev) => ({
       ...prev,
       exchangeId: id,
-      // Equity brokers are live-only (paper account by default); crypto defaults to virtual.
-      tradingMode: nextAsset === "equity" ? "live" : "virtual",
+      // Equity brokers are live-only (paper account by default); Hyperliquid is
+      // live-only too (its testnet is the paper path); other crypto defaults to virtual.
+      tradingMode: nextAsset === "equity" || id === "hyperliquid" ? "live" : "virtual",
       // Different broker = different credentials — never carry one broker's keys to another.
       exchangeApiKey: "",
       exchangeSecretKey: "",
@@ -415,7 +425,7 @@ export function CreateStrategy() {
             </div>
           )}
 
-          {isCrypto && (
+          {isCrypto && !isHyperliquid && (
             <Field label="Trading Mode">
               <select
                 value={form.tradingMode}
@@ -430,6 +440,21 @@ export function CreateStrategy() {
                 <option value="live">Live</option>
               </select>
             </Field>
+          )}
+
+          {isHyperliquid && (
+            <div className="text-xs text-gray-400 bg-gray-800/60 border border-gray-700 rounded-lg p-3 space-y-1.5">
+              <p>
+                Runs{" "}
+                <span className="text-gray-200 font-medium">live against the Hyperliquid testnet</span>{" "}
+                by default (the paper path) — mainnet only when the server disables paper-only mode.
+              </p>
+              <p>
+                Perps only, margined in USDC. Tickers are the native perp names (BTC, ETH, SOL) —
+                use the search, no "-USDT" suffix. Credentials come from the server environment,
+                not this form.
+              </p>
+            </div>
           )}
 
           {isEquity && (
@@ -502,44 +527,48 @@ export function CreateStrategy() {
 
           {isCryptoLive && (
             <>
-              <Field label="API Key">
-                <input
-                  type="password"
-                  value={form.exchangeApiKey}
-                  onChange={(e) => {
-                    update("exchangeApiKey", e.target.value);
-                    setBalanceFetched(false);
-                  }}
-                />
-              </Field>
-              <Field label="Secret Key">
-                <input
-                  type="password"
-                  value={form.exchangeSecretKey}
-                  onChange={(e) => {
-                    update("exchangeSecretKey", e.target.value);
-                    setBalanceFetched(false);
-                  }}
-                />
-              </Field>
-              <Field label="Market Type">
-                <select
-                  value={form.marketType}
-                  onChange={(e) => update("marketType", e.target.value)}
-                >
-                  <option value="swap">Futures (Perpetual)</option>
-                  <option value="spot">Spot</option>
-                </select>
-              </Field>
-              <Field label="Margin Mode">
-                <select
-                  value={form.marginMode}
-                  onChange={(e) => update("marginMode", e.target.value)}
-                >
-                  <option value="cross">Cross</option>
-                  <option value="isolated">Isolated</option>
-                </select>
-              </Field>
+              {!isHyperliquid && (
+                <>
+                  <Field label="API Key">
+                    <input
+                      type="password"
+                      value={form.exchangeApiKey}
+                      onChange={(e) => {
+                        update("exchangeApiKey", e.target.value);
+                        setBalanceFetched(false);
+                      }}
+                    />
+                  </Field>
+                  <Field label="Secret Key">
+                    <input
+                      type="password"
+                      value={form.exchangeSecretKey}
+                      onChange={(e) => {
+                        update("exchangeSecretKey", e.target.value);
+                        setBalanceFetched(false);
+                      }}
+                    />
+                  </Field>
+                  <Field label="Market Type">
+                    <select
+                      value={form.marketType}
+                      onChange={(e) => update("marketType", e.target.value)}
+                    >
+                      <option value="swap">Futures (Perpetual)</option>
+                      <option value="spot">Spot</option>
+                    </select>
+                  </Field>
+                  <Field label="Margin Mode">
+                    <select
+                      value={form.marginMode}
+                      onChange={(e) => update("marginMode", e.target.value)}
+                    >
+                      <option value="cross">Cross</option>
+                      <option value="isolated">Isolated</option>
+                    </select>
+                  </Field>
+                </>
+              )}
 
               {/* Balance fetch */}
               <div className="space-y-1.5">
@@ -547,8 +576,7 @@ export function CreateStrategy() {
                   type="button"
                   onClick={handleFetchBalance}
                   disabled={
-                    !form.exchangeApiKey ||
-                    !form.exchangeSecretKey ||
+                    (!isHyperliquid && (!form.exchangeApiKey || !form.exchangeSecretKey)) ||
                     fetchBalanceMutation.isPending
                   }
                   className="text-sm px-4 py-2 rounded-lg bg-gray-700 text-gray-200 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -721,7 +749,7 @@ export function CreateStrategy() {
         </Section>
 
         <div className="flex gap-3">
-          {isCrypto && (
+          {isCrypto && !isHyperliquid && (
             <button
               type="button"
               onClick={handleBacktestFirst}

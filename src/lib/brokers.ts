@@ -18,6 +18,7 @@ export interface BrokerMeta {
 // paper-simulation path — virtual mode uses Binance crypto data).
 export const BROKERS: BrokerMeta[] = [
   { id: "binance", label: "Binance", asset: "crypto", group: "Crypto" },
+  { id: "hyperliquid", label: "Hyperliquid", asset: "crypto", group: "Crypto" },
   { id: "ibkr", label: "Interactive Brokers", asset: "equity", group: "Equities (US)" },
   { id: "alpaca", label: "Alpaca", asset: "equity", group: "Equities (US)" },
 ];
@@ -36,6 +37,10 @@ export const brokerLabel = (id: string): string =>
 export const POPULAR_SYMBOLS_CRYPTO = [
   "BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT",
   "XRP-USDT", "DOGE-USDT", "ADA-USDT", "AVAX-USDT",
+];
+// Hyperliquid perps are native coin names (no pair suffix).
+export const POPULAR_SYMBOLS_HYPERLIQUID = [
+  "BTC", "ETH", "SOL", "XRP", "DOGE", "LINK", "ARB", "AVAX",
 ];
 export const POPULAR_SYMBOLS_EQUITY = [
   "AAPL", "MSFT", "NVDA", "AMZN",

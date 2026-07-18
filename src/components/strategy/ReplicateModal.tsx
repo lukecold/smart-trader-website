@@ -14,6 +14,7 @@ import {
   brokerLabel,
   POPULAR_SYMBOLS_CRYPTO,
   POPULAR_SYMBOLS_EQUITY,
+  POPULAR_SYMBOLS_HYPERLIQUID,
 } from "@/lib/brokers";
 import {
   SymbolTagInput,
@@ -169,7 +170,14 @@ export function ReplicateModal({
 
   const assetClass = assetClassOf(exchangeId);
   const isCrypto = assetClass === "crypto";
-  const popularSymbols = isCrypto ? POPULAR_SYMBOLS_CRYPTO : POPULAR_SYMBOLS_EQUITY;
+  // Hyperliquid is live-only: its testnet is the paper path, and virtual mode
+  // (Binance market data) cannot price native perp names.
+  const isHyperliquid = exchangeId === "hyperliquid";
+  const popularSymbols = isCrypto
+    ? isHyperliquid
+      ? POPULAR_SYMBOLS_HYPERLIQUID
+      : POPULAR_SYMBOLS_CRYPTO
+    : POPULAR_SYMBOLS_EQUITY;
   const exchangeChanged =
     config?.exchangeId != null && exchangeId !== config.exchangeId;
 
@@ -179,10 +187,10 @@ export function ReplicateModal({
     const nextAsset = assetClassOf(id);
     const prevAsset = assetClassOf(exchangeId);
     setExchangeId(id);
-    // Mirror the create form: equity brokers are live-only; back to crypto
-    // defaults to virtual paper.
-    if (nextAsset === "equity") setTradingMode("live");
-    else if (prevAsset === "equity") setTradingMode("virtual");
+    // Mirror the create form: equity brokers and Hyperliquid are live-only; back
+    // to (other) crypto defaults to virtual paper.
+    if (nextAsset === "equity" || id === "hyperliquid") setTradingMode("live");
+    else if (prevAsset === "equity" || exchangeId === "hyperliquid") setTradingMode("virtual");
     const kept = symbols.filter((s) => !invalidSymbolReason(s, nextAsset, id));
     const removed = symbols.length - kept.length;
     setSymbols(kept);
@@ -288,7 +296,7 @@ export function ReplicateModal({
         provider,
         model_id: modelId.trim(),
         api_key: apiKey.trim() || undefined,
-        trading_mode: isCrypto ? tradingMode : "live",
+        trading_mode: isCrypto && !isHyperliquid ? tradingMode : "live",
         initial_capital:
           isCrypto &&
           tradingMode === "virtual" &&
@@ -468,8 +476,9 @@ export function ReplicateModal({
               )}
             </div>
 
-            {/* Trading mode (crypto only — brokers run against their account) */}
-            {isCrypto && (
+            {/* Trading mode (crypto only — brokers run against their account;
+                Hyperliquid is live-only: its testnet is the paper path) */}
+            {isCrypto && !isHyperliquid && (
               <div className="mt-4">
                 <label className={labelCls}>Trading mode</label>
                 <div className="flex rounded-lg bg-gray-800/80 p-0.5 gap-0.5">
