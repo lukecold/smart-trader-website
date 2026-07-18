@@ -373,6 +373,56 @@ export function useProviderServerKeyConfigured(provider: string) {
   });
 }
 
+// One ticker-search hit from GET /instruments/search. `display` is the
+// ready-to-submit form (symbol+suffix; plain symbol for US listings), `suffix`
+// the venue tag (".HK", ".TSEJ", ...; "" for US).
+export interface InstrumentMatch {
+  symbol: string;
+  name: string;
+  exchange: string;
+  currency: string;
+  suffix: string;
+  display: string;
+}
+
+interface InstrumentSearchResponse {
+  matches: InstrumentMatch[];
+  // True when the server has no IBKR session configured for search (503) — the
+  // form then renders no dropdown at all (free-form typing still works).
+  unavailable?: boolean;
+}
+
+async function fetchInstrumentSearch(
+  q: string
+): Promise<InstrumentSearchResponse> {
+  const res = await api.get<InstrumentSearchResponse>(
+    `/instruments/search?q=${encodeURIComponent(q)}`
+  );
+  if (res.code === 503) {
+    return { matches: [], unavailable: true };
+  }
+  if (res.code !== 0 || !res.data) {
+    throw new Error(res.msg || "Instrument search failed");
+  }
+  return res.data;
+}
+
+// Ticker search across all supported markets (US + the suffixed IBKR venues).
+// The backend caches per normalized query for 5 minutes; the 60s staleTime here
+// keeps repeated keystrokes within a session from refetching. Disabled below 2
+// chars and logged out (the endpoint is auth-only — it rides the user's private
+// IBKR market-data session).
+export function useInstrumentSearch(q: string) {
+  const { isAuthenticated } = useAuthStore();
+  return useQuery({
+    queryKey: ["instrumentSearch", q],
+    queryFn: () => fetchInstrumentSearch(q),
+    enabled: isAuthenticated && q.trim().length >= 2,
+    staleTime: 60 * 1000,
+    retry: false, // a failed search must not stall typing with retry storms
+  });
+}
+
 // Rename a strategy (owner only). The backend enforces a 30-day cooldown between
 // renames. NOTE: the API returns business errors as HTTP 200 with a non-zero
 // envelope `code` + `msg` (cooldown / not-owner / invalid), so we must inspect the
